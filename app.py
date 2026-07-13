@@ -1,0 +1,188 @@
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import AppKit
+import pystray
+import webview
+from PIL import Image
+from PyObjCTools import AppHelper
+
+APP_TITLE = "List"
+LOCK_PATH = Path.home() / "Library" / "Application Support" / "List" / ".list.lock"
+
+WINDOW_WIDTH = 360
+WINDOW_HEIGHT = 540
+SCREEN_MARGIN = 12
+CHECK_INTERVAL_SECONDS = 20
+
+
+def resource_path(relative):
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
+
+
+_lock_fd = None
+
+
+def already_running():
+    global _lock_fd
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return False
+    except OSError:
+        return True
+
+
+window = None
+tray_icon = None
+visible = False
+stop_event = threading.Event()
+
+
+def position_near_menu_bar():
+    try:
+        screen = AppKit.NSScreen.mainScreen()
+        full = screen.frame()
+        visible_frame = screen.visibleFrame()
+        # Distance from the top of the screen down to the top of the usable
+        # area — i.e. the menu bar's height (varies with notch displays).
+        menu_bar_height = full.size.height - (visible_frame.origin.y + visible_frame.size.height)
+        x = full.size.width - WINDOW_WIDTH - SCREEN_MARGIN
+        y = menu_bar_height + SCREEN_MARGIN
+        window.move(x, y)
+    except Exception:
+        pass
+
+
+def show_window(icon=None, item=None):
+    global visible
+    if window is None:
+        return
+    position_near_menu_bar()
+    window.show()
+    visible = True
+
+
+def hide_window(icon=None, item=None):
+    global visible
+    if window is None:
+        return
+    window.hide()
+    visible = False
+
+
+def toggle_window(icon=None, item=None):
+    if visible:
+        hide_window()
+    else:
+        show_window()
+
+
+def quit_app(icon, item):
+    stop_event.set()
+    icon.stop()
+    if window is not None:
+        window.destroy()
+
+
+def on_closing():
+    hide_window()
+    return False
+
+
+def setup_tray():
+    # pystray's macOS backend creates an NSStatusItem, which (like all AppKit
+    # objects) must happen on the main thread. run_detached() hands the icon
+    # off to share pywebview's own NSApplication run loop instead of
+    # starting a second one via run().
+    global tray_icon
+    icon_image = Image.open(resource_path("menubar_icon.png"))
+    menu = pystray.Menu(
+        pystray.MenuItem("Open List", show_window, default=True),
+        pystray.MenuItem("Hide", hide_window),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Quit", quit_app),
+    )
+    tray_icon = pystray.Icon(
+        APP_TITLE,
+        icon_image,
+        APP_TITLE,
+        menu,
+        darwin_nsapplication=AppKit.NSApplication.sharedApplication(),
+    )
+    tray_icon.run_detached()
+
+
+def applescript_quote(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def notify(title, message):
+    script = f"display notification {applescript_quote(message)} with title {applescript_quote(title)}"
+    try:
+        subprocess.run(["osascript", "-e", script], check=False)
+    except Exception:
+        pass
+
+
+def notification_loop():
+    window.events.loaded.wait(timeout=15)
+    while not stop_event.is_set():
+        if stop_event.wait(CHECK_INTERVAL_SECONDS):
+            break
+        try:
+            result = window.evaluate_js("window.__checkDueTasks()")
+            due_items = json.loads(result) if result else []
+        except Exception:
+            due_items = []
+        for item in due_items:
+            notify(f"Due now — {item.get('list', APP_TITLE)}", item.get("text", ""))
+
+
+if __name__ == "__main__":
+    if already_running():
+        sys.exit(0)
+
+    html_path = resource_path("todo.html")
+    window = webview.create_window(
+        APP_TITLE,
+        html_path,
+        width=WINDOW_WIDTH,
+        height=WINDOW_HEIGHT,
+        min_size=(300, 400),
+        background_color="#16181d",
+        hidden=True,
+    )
+    window.events.closing += on_closing
+
+    # pywebview's Cocoa backend defaults the app to a Regular activation
+    # policy (Dock icon + Cmd+Tab entry) as soon as it's imported above.
+    # Switch to Accessory so this behaves like a menu-bar-only utility.
+    AppKit.NSApplication.sharedApplication().setActivationPolicy_(
+        AppKit.NSApplicationActivationPolicyAccessory
+    )
+
+    setup_tray()
+    threading.Thread(target=notification_loop, daemon=True).start()
+
+    def _reassert_accessory_policy(attempts_left=6):
+        # pywebview's run loop calls activateIgnoringOtherApps_ once shortly
+        # after start(), which flips the policy back to Regular (showing a
+        # Dock icon) even though we set Accessory above. Keep re-asserting
+        # it for the first few seconds until that one-time flip has passed.
+        AppKit.NSApplication.sharedApplication().setActivationPolicy_(
+            AppKit.NSApplicationActivationPolicyAccessory
+        )
+        if attempts_left > 1:
+            AppHelper.callLater(0.5, _reassert_accessory_policy, attempts_left - 1)
+
+    AppHelper.callLater(0.2, _reassert_accessory_policy)
+
+    webview.start()

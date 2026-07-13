@@ -1,0 +1,19 @@
+[project]
+name = "list-widget-mac"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=12.3.0",
+    "pyobjc-core>=12.2.1",
+    "pyobjc-framework-cocoa>=12.2.1",
+    "pyobjc-framework-quartz>=12.2.1",
+    "pyobjc-framework-webkit>=12.2.1",
+    "pystray>=0.19.5",
+    "pywebview>=6.2.1",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
+]

@@ -1,0 +1,615 @@
+<meta charset="utf-8">
+<title>List</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #1e2128;
+    --line: #2b2f38;
+    --text: #e7e9ee;
+    --muted: #8b909c;
+    --accent: #6ea8fe;
+    --done: #565b66;
+    --danger: #ff6b6b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #e7e9ee;
+      --text: #1c1e24;
+      --muted: #8b909c;
+      --accent: #2f6fed;
+      --done: #b3b7c0;
+      --danger: #e0483d;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .app {
+    width: 100%;
+    max-width: 460px;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 16px 20px 10px;
+  }
+  header h1 { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
+  header .count { font-size: 12px; color: var(--muted); margin-left: auto; }
+
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px 10px;
+    overflow-x: auto;
+    flex: none;
+  }
+  .tabs::-webkit-scrollbar { height: 0; }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+    flex: none;
+    border: 1px solid transparent;
+  }
+  .tab:hover { background: var(--panel); }
+  .tab.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .tab .tab-x {
+    opacity: 0;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 1px;
+  }
+  .tab:hover .tab-x { opacity: .7; }
+  .tab .tab-x:hover { opacity: 1 !important; color: #fff; }
+  .tab-add {
+    flex: none;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 1px dashed var(--line);
+    color: var(--muted);
+    background: none;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .tab-add:hover { border-color: var(--accent); color: var(--accent); }
+  .tab-name-input {
+    border: none;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    width: 90px;
+  }
+
+  .add {
+    display: flex;
+    gap: 8px;
+    padding: 4px 20px 14px;
+  }
+  .add input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--text);
+    padding: 11px 13px;
+    font-size: 15px;
+    outline: none;
+  }
+  .add input:focus { border-color: var(--accent); }
+  .add button {
+    background: var(--accent);
+    border: none;
+    border-radius: 9px;
+    color: #fff;
+    width: 44px;
+    font-size: 22px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .add button:active { transform: scale(.96); }
+  ul { list-style: none; overflow-y: auto; flex: 1; padding: 0 12px 16px; }
+  li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 10px;
+    border-radius: 9px;
+  }
+  li:hover { background: var(--panel); }
+  .box {
+    width: 20px; height: 20px;
+    margin-top: 1px;
+    border: 2px solid var(--muted);
+    border-radius: 6px;
+    flex: none;
+    cursor: pointer;
+    position: relative;
+    transition: .12s;
+  }
+  .box:hover { border-color: var(--accent); }
+  li.done .box { background: var(--accent); border-color: var(--accent); }
+  li.done .box::after {
+    content: "";
+    position: absolute; left: 5px; top: 1px;
+    width: 5px; height: 10px;
+    border: solid #fff; border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .txt-wrap { flex: 1; min-width: 0; }
+  .txt { cursor: text; word-break: break-word; padding-top: 1px; }
+  li.done .txt { color: var(--done); text-decoration: line-through; }
+  .due {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 3px;
+    cursor: pointer;
+    display: inline-block;
+  }
+  .due.overdue { color: var(--danger); }
+  li.done .due { color: var(--done); }
+  .row-actions {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: 2px;
+  }
+  .pin-btn, .due-btn, .del {
+    opacity: 0;
+    background: none; border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    flex: none;
+  }
+  .pin-btn { font-size: 13px; }
+  .due-btn { font-size: 14px; }
+  .del { font-size: 18px; }
+  li:hover .pin-btn, li:hover .due-btn, li:hover .del { opacity: 1; }
+  .pin-btn.pinned { opacity: 1; color: var(--accent); }
+  .pin-btn:hover { color: var(--accent); }
+  .due-btn:hover { color: var(--accent); }
+  .del:hover { color: var(--danger); }
+  li.pinned-row { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  .due-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .due-edit-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .due-edit input, .due-edit select {
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    padding: 4px 6px;
+    outline: none;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    .due-edit input, .due-edit select { color-scheme: light; }
+  }
+  .due-edit button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .due-edit button:hover { color: var(--danger); }
+  .empty { text-align: center; color: var(--muted); padding: 40px 20px; font-size: 14px; }
+  footer {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px 14px;
+    border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted);
+  }
+  footer button {
+    background: none; border: none; color: var(--muted);
+    cursor: pointer; font-size: 12px;
+  }
+  footer button:hover { color: var(--danger); }
+  ul::-webkit-scrollbar { width: 8px; }
+  ul::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+</style>
+
+<div class="app">
+  <header>
+    <h1>List</h1>
+    <span class="count" id="count"></span>
+  </header>
+  <div class="tabs" id="tabs"></div>
+  <form class="add" id="form">
+    <input id="input" placeholder="Add a task…" autocomplete="off" autofocus>
+    <button type="submit" title="Add">+</button>
+  </form>
+  <ul id="list"></ul>
+  <footer>
+    <span id="left"></span>
+    <button id="clear" style="margin-left:auto">Clear completed</button>
+  </footer>
+</div>
+
+<script>
+  const KEY = "todo.widget.v3";
+  const OLD_KEY_V2 = "todo.widget.v2";
+  const OLD_KEY_V1 = "todo.widget.v1";
+
+  let state = load();
+
+  const tabsEl = document.getElementById("tabs");
+  const list = document.getElementById("list");
+  const input = document.getElementById("input");
+
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+  function normalizeItems(items) {
+    (items || []).forEach(it => {
+      if (it.due === undefined) it.due = null;
+      if (it.notified === undefined) it.notified = false;
+      if (it.pinned === undefined) it.pinned = false;
+      if (it.repeat === undefined) it.repeat = null;
+    });
+    return items || [];
+  }
+
+  function load() {
+    let result = null;
+
+    try {
+      const raw = JSON.parse(localStorage.getItem(KEY));
+      if (raw && Array.isArray(raw.lists) && raw.lists.length) result = raw;
+    } catch {}
+
+    if (!result) {
+      try {
+        const v2 = JSON.parse(localStorage.getItem(OLD_KEY_V2));
+        if (v2 && Array.isArray(v2.lists) && v2.lists.length) result = v2;
+      } catch {}
+    }
+
+    if (!result) {
+      let migrated = [];
+      try { migrated = JSON.parse(localStorage.getItem(OLD_KEY_V1)) || []; } catch {}
+      const firstList = { id: uid(), name: "To-Do", items: Array.isArray(migrated) ? migrated : [] };
+      result = { lists: [firstList], active: firstList.id };
+    }
+
+    result.lists.forEach(l => normalizeItems(l.items));
+    return result;
+  }
+
+  function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+
+  function activeList() {
+    return state.lists.find(l => l.id === state.active) || state.lists[0];
+  }
+
+  function renderTabs() {
+    tabsEl.innerHTML = "";
+    state.lists.forEach(l => {
+      const tab = document.createElement("div");
+      tab.className = "tab" + (l.id === state.active ? " active" : "");
+
+      const name = document.createElement("span");
+      name.textContent = l.name;
+      name.ondblclick = ev => { ev.stopPropagation(); renameTab(l, tab, name); };
+
+      tab.onclick = () => { state.active = l.id; save(); renderTabs(); renderList(); };
+
+      tab.appendChild(name);
+
+      if (state.lists.length > 1) {
+        const x = document.createElement("span");
+        x.className = "tab-x";
+        x.textContent = "×";
+        x.title = "Delete list";
+        x.onclick = ev => {
+          ev.stopPropagation();
+          if (!confirm(`Delete the "${l.name}" list and all its tasks?`)) return;
+          state.lists = state.lists.filter(x2 => x2.id !== l.id);
+          if (state.active === l.id) state.active = state.lists[0].id;
+          save(); renderTabs(); renderList();
+        };
+        tab.appendChild(x);
+      }
+
+      tabsEl.appendChild(tab);
+    });
+
+    const addBtn = document.createElement("button");
+    addBtn.className = "tab-add";
+    addBtn.textContent = "+";
+    addBtn.title = "New list";
+    addBtn.onclick = () => {
+      const l = { id: uid(), name: "New list", items: [] };
+      state.lists.push(l);
+      state.active = l.id;
+      save(); renderTabs(); renderList();
+      requestAnimationFrame(() => {
+        const tabs = tabsEl.querySelectorAll(".tab");
+        const lastTab = tabs[tabs.length - 1];
+        const nameEl = lastTab && lastTab.querySelector("span");
+        if (lastTab && nameEl) renameTab(l, lastTab, nameEl, true);
+      });
+    };
+    tabsEl.appendChild(addBtn);
+  }
+
+  function renameTab(l, tab, nameEl, selectAll) {
+    const inp = document.createElement("input");
+    inp.className = "tab-name-input";
+    inp.value = l.name;
+    nameEl.replaceWith(inp);
+    inp.focus();
+    if (selectAll) inp.select(); else inp.setSelectionRange(inp.value.length, inp.value.length);
+    const commit = () => {
+      const v = inp.value.trim();
+      l.name = v || l.name;
+      save(); renderTabs(); renderList();
+    };
+    inp.onblur = commit;
+    inp.onkeydown = e => {
+      if (e.key === "Enter") inp.blur();
+      if (e.key === "Escape") { inp.onblur = null; renderTabs(); }
+    };
+    inp.onclick = ev => ev.stopPropagation();
+  }
+
+  function toLocalInputValue(iso) {
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function formatDue(iso) {
+    const d = new Date(iso);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    const opts = sameDay
+      ? { hour: "numeric", minute: "2-digit" }
+      : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+    return d.toLocaleString(undefined, opts);
+  }
+
+  function repeatLabel(r) {
+    return r === "daily" ? "Daily" : r === "weekly" ? "Weekly" : r === "monthly" ? "Monthly" : "";
+  }
+
+  function nextOccurrence(iso, repeat) {
+    const d = new Date(iso);
+    if (repeat === "daily") d.setDate(d.getDate() + 1);
+    else if (repeat === "weekly") d.setDate(d.getDate() + 7);
+    else if (repeat === "monthly") d.setMonth(d.getMonth() + 1);
+    return d.toISOString();
+  }
+
+  function renderList() {
+    const al = activeList();
+    const items = al.items;
+    list.innerHTML = "";
+    if (!items.length) {
+      list.innerHTML = '<div class="empty">Nothing here yet — add your first task above.</div>';
+    }
+
+    const order = items.map((_, i) => i)
+      .sort((a, b) => (items[b].pinned ? 1 : 0) - (items[a].pinned ? 1 : 0));
+
+    order.forEach(i => {
+      const it = items[i];
+      const li = document.createElement("li");
+      li.className = (it.done ? "done " : "") + (it.pinned ? "pinned-row" : "");
+
+      const box = document.createElement("div");
+      box.className = "box";
+      box.onclick = () => {
+        const nowDone = !items[i].done;
+        items[i].done = nowDone;
+        if (nowDone && items[i].repeat && items[i].due) {
+          items[i].due = nextOccurrence(items[i].due, items[i].repeat);
+          items[i].done = false;
+          items[i].notified = false;
+        }
+        save(); renderList();
+      };
+
+      const txtWrap = document.createElement("div");
+      txtWrap.className = "txt-wrap";
+
+      const txt = document.createElement("div");
+      txt.className = "txt";
+      txt.textContent = it.text;
+      txt.title = "Double-click to edit";
+      txt.ondblclick = () => edit(i, txt);
+      txtWrap.appendChild(txt);
+
+      if (it.due) {
+        const overdue = !it.done && new Date(it.due).getTime() <= Date.now();
+        const due = document.createElement("div");
+        due.className = "due" + (overdue ? " overdue" : "");
+        due.textContent = (overdue ? "Overdue • " : "") + formatDue(it.due) +
+          (it.repeat ? " · ↻ " + repeatLabel(it.repeat) : "");
+        due.title = "Click to change due date/time";
+        due.onclick = () => toggleDueEdit(i, txtWrap);
+        txtWrap.appendChild(due);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+
+      const pinBtn = document.createElement("button");
+      pinBtn.className = "pin-btn" + (it.pinned ? " pinned" : "");
+      pinBtn.textContent = "📌";
+      pinBtn.title = it.pinned ? "Unpin" : "Pin to top";
+      pinBtn.onclick = () => { items[i].pinned = !items[i].pinned; save(); renderList(); };
+
+      const dueBtn = document.createElement("button");
+      dueBtn.className = "due-btn";
+      dueBtn.textContent = "🕐";
+      dueBtn.title = it.due ? "Change due date/time" : "Add due date/time";
+      dueBtn.onclick = () => toggleDueEdit(i, txtWrap);
+
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "×";
+      del.title = "Delete";
+      del.onclick = () => { items.splice(i, 1); save(); renderList(); };
+
+      actions.append(pinBtn, dueBtn, del);
+      li.append(box, txtWrap, actions);
+      list.appendChild(li);
+    });
+
+    const done = items.filter(x => x.done).length;
+    document.getElementById("count").textContent = items.length ? `${done}/${items.length}` : "";
+    const left = items.length - done;
+    document.getElementById("left").textContent =
+      items.length ? `${left} left` : "";
+  }
+
+  function toggleDueEdit(i, container) {
+    const existing = container.querySelector(".due-edit");
+    if (existing) { existing.remove(); return; }
+
+    const items = activeList().items;
+    const wrap = document.createElement("div");
+    wrap.className = "due-edit";
+
+    const row = document.createElement("div");
+    row.className = "due-edit-row";
+
+    const inp = document.createElement("input");
+    inp.type = "datetime-local";
+    if (items[i].due) inp.value = toLocalInputValue(items[i].due);
+
+    inp.onchange = () => {
+      if (inp.value) {
+        items[i].due = new Date(inp.value).toISOString();
+        items[i].notified = false;
+      }
+      save(); renderList();
+    };
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "Clear";
+    clearBtn.onclick = () => {
+      items[i].due = null;
+      items[i].notified = false;
+      items[i].repeat = null;
+      save(); renderList();
+    };
+
+    row.append(inp, clearBtn);
+
+    const repeatSelect = document.createElement("select");
+    [["", "Doesn't repeat"], ["daily", "Repeats daily"], ["weekly", "Repeats weekly"], ["monthly", "Repeats monthly"]]
+      .forEach(([value, label]) => {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        if ((items[i].repeat || "") === value) opt.selected = true;
+        repeatSelect.appendChild(opt);
+      });
+    repeatSelect.onchange = () => {
+      items[i].repeat = repeatSelect.value || null;
+      save(); renderList();
+    };
+
+    wrap.append(row, repeatSelect);
+    container.appendChild(wrap);
+    inp.focus();
+  }
+
+  function edit(i, el) {
+    const items = activeList().items;
+    const inp = document.createElement("input");
+    inp.value = items[i].text;
+    inp.style.cssText = "flex:1;background:var(--bg);border:1px solid var(--accent);border-radius:6px;color:var(--text);padding:4px 6px;font:inherit;outline:none";
+    el.replaceWith(inp);
+    inp.focus();
+    inp.setSelectionRange(inp.value.length, inp.value.length);
+    const commit = () => {
+      const v = inp.value.trim();
+      if (v) items[i].text = v; else items.splice(i, 1);
+      save(); renderList();
+    };
+    inp.onblur = commit;
+    inp.onkeydown = e => {
+      if (e.key === "Enter") inp.blur();
+      if (e.key === "Escape") { inp.onblur = null; renderList(); }
+    };
+  }
+
+  document.getElementById("form").onsubmit = e => {
+    e.preventDefault();
+    const v = input.value.trim();
+    if (!v) return;
+    activeList().items.unshift({ text: v, done: false, due: null, notified: false, pinned: false, repeat: null });
+    input.value = "";
+    save(); renderList();
+  };
+
+  document.getElementById("clear").onclick = () => {
+    const al = activeList();
+    al.items = al.items.filter(x => !x.done);
+    save(); renderList();
+  };
+
+  // Called periodically from Python (even while the window is hidden in the
+  // tray) to find due tasks and hand back native-notification payloads.
+  window.__checkDueTasks = function () {
+    const now = Date.now();
+    const dueNow = [];
+    state.lists.forEach(l => {
+      l.items.forEach(it => {
+        if (it.due && !it.done && !it.notified && new Date(it.due).getTime() <= now) {
+          it.notified = true;
+          dueNow.push({ list: l.name, text: it.text });
+        }
+      });
+    });
+    if (dueNow.length) {
+      save();
+      // Don't yank an in-progress edit out from under the user — the next
+      // render (tab switch, add, toggle, etc.) will pick up the change.
+      if (!document.querySelector(".due-edit")) renderList();
+    }
+    return JSON.stringify(dueNow);
+  };
+
+  renderTabs();
+  renderList();
+</script>
