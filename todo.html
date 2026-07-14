@@ -31,7 +31,7 @@
     color: var(--text);
     font: 15px/1.4 "Segoe UI", system-ui, sans-serif;
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     -webkit-user-select: none;
     user-select: none;
   }
@@ -50,10 +50,11 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    /* extra left padding clears the traffic-light buttons, and extra top
-       padding clears the window's rounded top corners — both float
-       directly over the content now that the titlebar is transparent */
-    padding: 28px 24px 10px 76px;
+    /* left padding clears the traffic-light buttons, which float directly
+       over the content now that the titlebar is transparent — top padding
+       is kept tight so this row reads as part of that same corner instead
+       of a separate bar floating below it */
+    padding: 16px 24px 10px 72px;
   }
   header .count { font-size: 12px; color: var(--muted); margin-left: auto; }
   .icon-btn {
@@ -61,8 +62,9 @@
     border: none;
     color: var(--muted);
     cursor: pointer;
-    font-size: 14px;
-    padding: 2px 3px;
+    font-size: 19px;
+    padding: 5px 7px;
+    line-height: 1;
     flex: none;
   }
   .icon-btn:hover { color: var(--accent); }
@@ -130,6 +132,166 @@
   }
   .switch input:checked + .switch-track { background: var(--accent); }
   .switch input:checked + .switch-track::before { transform: translateX(16px); }
+
+  /* ---- calendar: shared ---- */
+  .cal-view { padding: 4px 14px 14px; }
+  .cal-chip {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 9px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-left: 3px solid var(--tab-color, var(--line));
+    cursor: pointer;
+  }
+  .cal-chip .box {
+    width: 15px; height: 15px;
+    border: 2px solid var(--muted);
+    border-radius: 5px;
+    flex: none;
+    cursor: pointer;
+  }
+  .cal-chip .txt { font-size: 12.5px; flex: 1; min-width: 0; word-break: break-word; }
+  .cal-chip .listname { font-size: 10.5px; color: var(--muted); }
+  .cal-chip .time {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+    white-space: nowrap;
+  }
+  .cal-chip.overdue .time { color: var(--danger); }
+
+  /* ---- calendar: day view ---- */
+  .daynav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px 14px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .daynav button {
+    background: none; border: none; color: var(--muted);
+    font-size: 16px; cursor: pointer; padding: 2px 10px;
+  }
+  .daynav button:hover { color: var(--accent); }
+  .daynav .label { font-size: 13.5px; font-weight: 600; text-align: center; cursor: pointer; }
+  .daynav .label .sub { color: var(--muted); font-weight: 400; font-size: 11px; display: block; }
+  .hour-row {
+    display: flex;
+    gap: 10px;
+    min-height: 44px;
+    border-top: 1px solid var(--line);
+    padding-top: 5px;
+  }
+  .hour-row .hourlabel {
+    width: 42px;
+    flex: none;
+    font-size: 10.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    padding-top: 1px;
+  }
+  .hour-row .slot { flex: 1; display: flex; flex-direction: column; gap: 4px; padding-bottom: 5px; min-width: 0; }
+  .task-block {
+    background: color-mix(in srgb, var(--tab-color, var(--accent)) 22%, var(--panel));
+    border-left: 3px solid var(--tab-color, var(--accent));
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 11.5px;
+    line-height: 1.3;
+    cursor: pointer;
+  }
+  .task-block.overdue { border-left-color: var(--danger); }
+  .task-block .t { font-size: 10px; color: var(--muted); display: block; margin-top: 1px; }
+
+  /* ---- calendar: month view ---- */
+  .cal-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 2px 12px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .cal-nav button {
+    background: none; border: none; color: var(--muted);
+    font-size: 16px; cursor: pointer; padding: 2px 10px;
+  }
+  .cal-nav button:hover { color: var(--accent); }
+  .cal-nav .month { font-size: 14px; font-weight: 600; }
+  .cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    margin-bottom: 10px;
+  }
+  .cal-grid .dow {
+    text-align: center;
+    font-size: 10px;
+    color: var(--muted);
+    padding-bottom: 4px;
+  }
+  .cal-day {
+    aspect-ratio: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--text);
+    background: none;
+    border: none;
+    position: relative;
+    cursor: pointer;
+    font: inherit;
+  }
+  .cal-day:hover { background: var(--panel); }
+  .cal-day.muted { color: var(--done); }
+  .cal-day.today { background: var(--accent); color: #fff; font-weight: 700; }
+  .cal-day.selected:not(.today) { border: 1.5px solid var(--accent); }
+  .cal-day .mark {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    position: absolute;
+    bottom: 4px;
+  }
+  .cal-day.today .mark { background: #fff; }
+  .cal-daytasks { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 12px; }
+  .cal-daytasks .heading { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; }
+  .cal-list { display: flex; flex-direction: column; gap: 6px; }
+
+  /* ---- calendar: agenda view ---- */
+  .agenda-group { margin-top: 16px; }
+  .agenda-group:first-child { margin-top: 4px; }
+  .agenda-heading {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .agenda-heading .n {
+    background: var(--line);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 600;
+  }
 
   .completed-at {
     font-size: 11.5px;
@@ -287,7 +449,9 @@
   .add {
     display: flex;
     gap: 8px;
-    padding: 4px 20px 14px;
+    padding: 10px 20px 14px;
+    border-top: 1px solid var(--line);
+    flex: none;
   }
   /* the [hidden] attribute alone can't win against a plain-class display
      rule of equal specificity, so pair it with the class explicitly */
@@ -431,9 +595,9 @@
   .empty { text-align: center; color: var(--muted); padding: 40px 20px; font-size: 14px; }
   footer {
     display: flex; align-items: center; gap: 12px;
-    padding: 10px 20px 14px;
-    border-top: 1px solid var(--line);
+    padding: 8px 20px 0;
     font-size: 12px; color: var(--muted);
+    flex: none;
   }
   footer button {
     background: none; border: none; color: var(--muted);
@@ -448,18 +612,20 @@
   <header>
     <button id="backBtn" class="icon-btn" title="Back" hidden>←</button>
     <span class="count" id="count"></span>
-    <button id="archiveBtn" class="icon-btn" title="Completed tasks">🗂️</button>
-    <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
+    <button id="calStyleBtn" class="icon-btn" title="Calendar layout" hidden>☰</button>
+    <button id="calendarBtn" class="icon-btn" title="Calendar">▦</button>
+    <button id="archiveBtn" class="icon-btn" title="Completed tasks">☑</button>
+    <button id="settingsBtn" class="icon-btn" title="Settings">⚙</button>
   </header>
   <div class="tabs" id="tabs"></div>
-  <form class="add" id="form">
-    <input id="input" placeholder="Add a task…" autocomplete="off" autofocus>
-    <button type="submit" title="Add">+</button>
-  </form>
   <ul id="list"></ul>
   <footer>
     <span id="left"></span>
   </footer>
+  <form class="add" id="form">
+    <input id="input" placeholder="Add a task…" autocomplete="off" autofocus>
+    <button type="submit" title="Add">+</button>
+  </form>
 </div>
 
 <script>
@@ -499,6 +665,11 @@
   // "active" shows open tasks; "completed" shows the current list's
   // finished tasks (still just a view over the same underlying data).
   let viewMode = "active";
+
+  // The focused day in the calendar's day view, and the selected day in
+  // its month view — reused across both since only one layout renders
+  // at a time (picked in Settings).
+  let calendarDate = new Date();
 
   let audioCtx = null;
   function getAudioCtx() {
@@ -587,7 +758,7 @@
     if (!result) {
       let migrated = [];
       try { migrated = JSON.parse(localStorage.getItem(OLD_KEY_V1)) || []; } catch {}
-      const firstList = { id: uid(), name: "To-Do", items: Array.isArray(migrated) ? migrated : [] };
+      const firstList = { id: uid(), name: "Tasks", items: Array.isArray(migrated) ? migrated : [] };
       result = { lists: [firstList], active: firstList.id };
     }
 
@@ -598,6 +769,7 @@
     if (!result.settings) result.settings = {};
     if (!result.settings.retention) result.settings.retention = "endOfDay";
     if (result.settings.vibrancy === undefined) result.settings.vibrancy = false;
+    if (!result.settings.calendarView) result.settings.calendarView = "day";
     return result;
   }
 
@@ -780,7 +952,7 @@
     const wheelLabel = document.createElement("label");
     wheelLabel.className = "tab-menu-wheel-label";
     wheelLabel.title = "Custom color";
-    wheelLabel.append("🎨 Custom");
+    wheelLabel.append("Custom");
 
     const wheel = document.createElement("input");
     wheel.type = "color";
@@ -859,6 +1031,7 @@
   function renderList() {
     if (viewMode === "completed") renderCompletedList();
     else if (viewMode === "settings") renderSettingsView();
+    else if (viewMode === "calendar") renderCalendarView();
     else renderActiveList();
   }
 
@@ -929,13 +1102,13 @@
 
       const pinBtn = document.createElement("button");
       pinBtn.className = "pin-btn" + (it.pinned ? " pinned" : "");
-      pinBtn.textContent = "📌";
+      pinBtn.textContent = "★";
       pinBtn.title = it.pinned ? "Unpin" : "Pin to top";
       pinBtn.onclick = () => { items[i].pinned = !items[i].pinned; save(); renderList(); };
 
       const dueBtn = document.createElement("button");
       dueBtn.className = "due-btn";
-      dueBtn.textContent = "🕐";
+      dueBtn.textContent = "◷";
       dueBtn.title = it.due ? "Change due date/time" : "Add due date/time";
       dueBtn.onclick = () => toggleDueEdit(i, txtWrap);
 
@@ -1115,6 +1288,304 @@
     }
   }
 
+  // ---- Calendar view (day / agenda / month, picked in Settings) ----
+
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  // Due, not-yet-done tasks across every list, each paired with its list
+  // (for color + name) — the calendar looks across all lists, not just
+  // the active one, since due dates matter regardless of which list.
+  function collectDueTasks() {
+    const result = [];
+    state.lists.forEach(l => {
+      l.items.forEach(it => {
+        if (it.due && !it.done) result.push({ item: it, list: l });
+      });
+    });
+    result.sort((a, b) => new Date(a.item.due) - new Date(b.item.due));
+    return result;
+  }
+
+  function completeDueTask(entry) {
+    playCheckSound();
+    entry.item.done = true;
+    entry.item.completedAt = new Date().toISOString();
+    if (entry.item.repeat && entry.item.due) {
+      entry.item.due = nextOccurrence(entry.item.due, entry.item.repeat);
+      entry.item.done = false;
+      entry.item.completedAt = null;
+    }
+    save();
+    renderList();
+  }
+
+  function buildCalChip(entry, opts) {
+    opts = opts || {};
+    const { item, list } = entry;
+    const overdue = new Date(item.due).getTime() <= Date.now();
+    const chip = document.createElement("div");
+    chip.className = "cal-chip" + (overdue ? " overdue" : "");
+    if (list.color) chip.style.setProperty("--tab-color", list.color);
+
+    const box = document.createElement("div");
+    box.className = "box";
+    box.title = "Mark as done";
+    box.onclick = ev => { ev.stopPropagation(); completeDueTask(entry); };
+
+    const txt = document.createElement("div");
+    txt.className = "txt";
+    txt.textContent = item.text;
+
+    chip.append(box, txt);
+
+    if (opts.showList && state.lists.length > 1) {
+      const listname = document.createElement("div");
+      listname.className = "listname";
+      listname.textContent = list.name;
+      chip.appendChild(listname);
+    }
+
+    const time = document.createElement("div");
+    time.className = "time";
+    time.textContent = (overdue ? "Overdue · " : "") + (opts.timeText || formatDue(item.due));
+    chip.appendChild(time);
+
+    return chip;
+  }
+
+  function renderCalendarView() {
+    document.getElementById("count").textContent = "";
+    document.getElementById("left").textContent = "";
+    const style = state.settings.calendarView;
+    if (style === "agenda") renderCalendarAgenda();
+    else if (style === "month") renderCalendarMonth();
+    else renderCalendarDay();
+  }
+
+  function renderCalendarDay() {
+    list.innerHTML = "";
+    const view = document.createElement("div");
+    view.className = "cal-view";
+
+    const today = new Date();
+    const isToday = sameDay(calendarDate, today);
+
+    const nav = document.createElement("div");
+    nav.className = "daynav";
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.textContent = "‹";
+    prev.onclick = () => { calendarDate.setDate(calendarDate.getDate() - 1); renderList(); };
+    const next = document.createElement("button");
+    next.type = "button";
+    next.textContent = "›";
+    next.onclick = () => { calendarDate.setDate(calendarDate.getDate() + 1); renderList(); };
+    const label = document.createElement("div");
+    label.className = "label";
+    label.title = "Jump to today";
+    const main = document.createElement("div");
+    main.textContent = isToday ? "Today" : calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const sub = document.createElement("span");
+    sub.className = "sub";
+    sub.textContent = calendarDate.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    label.append(main, sub);
+    label.onclick = () => { calendarDate = new Date(); renderList(); };
+    nav.append(prev, label, next);
+    view.appendChild(nav);
+
+    const dueToday = collectDueTasks().filter(e => sameDay(new Date(e.item.due), calendarDate));
+
+    const grid = document.createElement("div");
+    grid.className = "hourgrid";
+    for (let h = 0; h < 24; h++) {
+      const row = document.createElement("div");
+      row.className = "hour-row";
+      const hourLabel = document.createElement("div");
+      hourLabel.className = "hourlabel";
+      hourLabel.textContent = new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: "numeric" });
+      const slot = document.createElement("div");
+      slot.className = "slot";
+      dueToday.filter(e => new Date(e.item.due).getHours() === h).forEach(e => {
+        const overdue = new Date(e.item.due).getTime() <= Date.now();
+        const block = document.createElement("div");
+        block.className = "task-block" + (overdue ? " overdue" : "");
+        if (e.list.color) block.style.setProperty("--tab-color", e.list.color);
+        block.onclick = () => completeDueTask(e);
+        block.append(e.item.text);
+        const t = document.createElement("span");
+        t.className = "t";
+        t.textContent = formatDue(e.item.due) + (state.lists.length > 1 ? " · " + e.list.name : "");
+        block.appendChild(t);
+        slot.appendChild(block);
+      });
+      row.append(hourLabel, slot);
+      grid.appendChild(row);
+    }
+    view.appendChild(grid);
+    list.appendChild(view);
+
+    requestAnimationFrame(() => {
+      const targetHour = isToday ? today.getHours() : (dueToday[0] ? new Date(dueToday[0].item.due).getHours() : 8);
+      const rows = grid.querySelectorAll(".hour-row");
+      if (rows[targetHour]) list.scrollTop = Math.max(0, rows[targetHour].offsetTop - 30);
+    });
+  }
+
+  function agendaTimeText(iso, groupKey) {
+    const d = new Date(iso);
+    if (groupKey === "today" || groupKey === "tomorrow") {
+      return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    }
+    if (groupKey === "week") return d.toLocaleDateString(undefined, { weekday: "short" });
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function renderCalendarAgenda() {
+    list.innerHTML = "";
+    const view = document.createElement("div");
+    view.className = "cal-view";
+
+    const due = collectDueTasks();
+    const now = new Date();
+    const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow0 = new Date(today0); tomorrow0.setDate(tomorrow0.getDate() + 1);
+    const afterTomorrow0 = new Date(today0); afterTomorrow0.setDate(afterTomorrow0.getDate() + 2);
+    const weekEnd0 = new Date(today0); weekEnd0.setDate(weekEnd0.getDate() + 7);
+
+    const groups = { today: [], tomorrow: [], week: [], later: [] };
+    due.forEach(e => {
+      const d = new Date(e.item.due);
+      if (d < tomorrow0) groups.today.push(e);
+      else if (d < afterTomorrow0) groups.tomorrow.push(e);
+      else if (d < weekEnd0) groups.week.push(e);
+      else groups.later.push(e);
+    });
+
+    const GROUP_LABELS = { today: "Today", tomorrow: "Tomorrow", week: "This week", later: "Later" };
+    let any = false;
+    ["today", "tomorrow", "week", "later"].forEach(key => {
+      const items = groups[key];
+      if (!items.length) return;
+      any = true;
+      const g = document.createElement("div");
+      g.className = "agenda-group";
+      const heading = document.createElement("div");
+      heading.className = "agenda-heading";
+      heading.append(GROUP_LABELS[key]);
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = items.length;
+      heading.appendChild(n);
+      g.appendChild(heading);
+      const listWrap = document.createElement("div");
+      listWrap.className = "cal-list";
+      items.forEach(e => {
+        listWrap.appendChild(buildCalChip(e, { timeText: agendaTimeText(e.item.due, key), showList: true }));
+      });
+      g.appendChild(listWrap);
+      view.appendChild(g);
+    });
+
+    if (!any) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No upcoming due tasks.";
+      view.appendChild(empty);
+    }
+
+    list.appendChild(view);
+  }
+
+  function renderCalendarMonth() {
+    list.innerHTML = "";
+    const view = document.createElement("div");
+    view.className = "cal-view";
+
+    const due = collectDueTasks();
+    const dueDates = new Set(due.map(e => {
+      const d = new Date(e.item.due);
+      return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+    }));
+
+    const nav = document.createElement("div");
+    nav.className = "cal-nav";
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.textContent = "‹";
+    prev.onclick = () => { calendarDate = new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1); renderList(); };
+    const next = document.createElement("button");
+    next.type = "button";
+    next.textContent = "›";
+    next.onclick = () => { calendarDate = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1); renderList(); };
+    const monthLabel = document.createElement("div");
+    monthLabel.className = "month";
+    monthLabel.textContent = calendarDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    nav.append(prev, monthLabel, next);
+    view.appendChild(nav);
+
+    const grid = document.createElement("div");
+    grid.className = "cal-grid";
+    ["S", "M", "T", "W", "T", "F", "S"].forEach(d => {
+      const dow = document.createElement("div");
+      dow.className = "dow";
+      dow.textContent = d;
+      grid.appendChild(dow);
+    });
+
+    const firstOfMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
+    const gridStart = new Date(firstOfMonth);
+    gridStart.setDate(gridStart.getDate() - firstOfMonth.getDay());
+
+    const today = new Date();
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + i);
+      const inMonth = d.getMonth() === calendarDate.getMonth();
+      const dayBtn = document.createElement("button");
+      dayBtn.type = "button";
+      dayBtn.className = "cal-day"
+        + (inMonth ? "" : " muted")
+        + (sameDay(d, today) ? " today" : "")
+        + (!sameDay(d, today) && sameDay(d, calendarDate) ? " selected" : "");
+      dayBtn.append(String(d.getDate()));
+      if (dueDates.has(d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate())) {
+        const mark = document.createElement("span");
+        mark.className = "mark";
+        dayBtn.appendChild(mark);
+      }
+      dayBtn.onclick = () => { calendarDate = d; renderList(); };
+      grid.appendChild(dayBtn);
+    }
+    view.appendChild(grid);
+
+    const daytasks = document.createElement("div");
+    daytasks.className = "cal-daytasks";
+    const heading = document.createElement("div");
+    heading.className = "heading";
+    heading.textContent = sameDay(calendarDate, today)
+      ? "Today"
+      : calendarDate.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    daytasks.appendChild(heading);
+
+    const dayTasks = due.filter(e => sameDay(new Date(e.item.due), calendarDate));
+    const listWrap = document.createElement("div");
+    listWrap.className = "cal-list";
+    if (!dayTasks.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint";
+      empty.textContent = "Nothing due this day.";
+      listWrap.appendChild(empty);
+    } else {
+      dayTasks.forEach(e => listWrap.appendChild(buildCalChip(e, { showList: true })));
+    }
+    daytasks.appendChild(listWrap);
+    view.appendChild(daytasks);
+
+    list.appendChild(view);
+  }
+
   function toggleDueEdit(i, container) {
     const existing = container.querySelector(".due-edit");
     if (existing) { existing.remove(); return; }
@@ -1129,7 +1600,7 @@
     const calBtn = document.createElement("button");
     calBtn.type = "button";
     calBtn.className = "cal-btn";
-    calBtn.textContent = "📅";
+    calBtn.textContent = "▦";
     calBtn.title = "Pick a date";
 
     const dateInp = document.createElement("input");
@@ -1225,6 +1696,8 @@
   };
 
   const backBtn = document.getElementById("backBtn");
+  const calStyleBtn = document.getElementById("calStyleBtn");
+  const calendarBtn = document.getElementById("calendarBtn");
   const archiveBtn = document.getElementById("archiveBtn");
   const settingsBtn = document.getElementById("settingsBtn");
   const tabsContainer = document.getElementById("tabs");
@@ -1233,6 +1706,8 @@
   function setViewMode(mode) {
     viewMode = viewMode === mode ? "active" : mode;
     backBtn.hidden = viewMode === "active";
+    calStyleBtn.hidden = viewMode !== "calendar";
+    calendarBtn.classList.toggle("active", viewMode === "calendar");
     archiveBtn.classList.toggle("active", viewMode === "completed");
     settingsBtn.classList.toggle("active", viewMode === "settings");
     addForm.hidden = viewMode !== "active";
@@ -1241,8 +1716,46 @@
   }
 
   backBtn.onclick = () => setViewMode("active");
+  calendarBtn.onclick = () => setViewMode("calendar");
   archiveBtn.onclick = () => setViewMode("completed");
   settingsBtn.onclick = () => setViewMode("settings");
+
+  const CALENDAR_STYLES = [
+    ["day", "Day view (hour grid)"],
+    ["agenda", "Agenda list"],
+    ["month", "Mini month calendar"],
+  ];
+
+  calStyleBtn.onclick = ev => {
+    closeTabMenu();
+    const menu = document.createElement("div");
+    menu.className = "tab-menu";
+    menu.onclick = e => e.stopPropagation();
+
+    CALENDAR_STYLES.forEach(([value, text]) => {
+      const item = document.createElement("button");
+      item.className = "tab-menu-item";
+      item.textContent = (state.settings.calendarView === value ? "✓ " : "　 ") + text;
+      item.onclick = () => {
+        state.settings.calendarView = value;
+        save();
+        closeTabMenu();
+        renderList();
+      };
+      menu.appendChild(item);
+    });
+
+    document.body.appendChild(menu);
+    const rect = calStyleBtn.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth;
+    const maxX = window.innerWidth - menuWidth - 8;
+    menu.style.left = Math.max(8, Math.min(rect.left, maxX)) + "px";
+    menu.style.top = (rect.bottom + 6) + "px";
+
+    tabMenuCloser = closeTabMenu;
+    document.addEventListener("click", tabMenuCloser);
+    ev.stopPropagation();
+  };
 
   // Called periodically from Python (even while the window is hidden in the
   // tray) to find due tasks and hand back native-notification payloads.

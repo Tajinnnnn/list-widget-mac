@@ -2,7 +2,11 @@
 
 A small to-do list that lives in the menu bar — left-click the icon to pop
 the list open directly, right-click for Hide/Quit. Ported from a Windows
-system-tray version (`pywebview` + `pystray`) to macOS.
+system-tray version (`pywebview` + `pystray`) to macOS. The original
+Windows version now lives on as its own project, sibling to this one:
+[`list-widget-windows`](../list-widget-windows) — the two have diverged
+since the port, so features added here (Calendar view, tab colors,
+sounds, etc.) aren't automatically in that repo.
 
 ## Project layout
 
@@ -43,6 +47,15 @@ system-tray version (`pywebview` + `pystray`) to macOS.
   floating directly over the app's own background (see "Seamless
   titlebar" below for how, since it's not a documented pywebview
   option).
+- **Calendar** view (▦ in the header, with its own ☰ layout switcher):
+  three interchangeable layouts — a day view with an hour grid, an
+  agenda list grouped by Today/Tomorrow/This week/Later, and a mini
+  month calendar with dots on days that have due tasks. Pulls due,
+  not-yet-done tasks from every list (not just the active one), each
+  tagged with its list's color.
+- All in-app icons are plain monochrome Unicode symbols (☰ ▦ ☑ ⚙ ★ ◷),
+  not colored emoji — matches native menu bar icon styling instead of
+  looking like a mobile app.
 
 ## Develop
 
@@ -98,6 +111,12 @@ Tasks are stored in the WKWebView's `localStorage`, under
 identifier — same storage that persisted `todo.widget.v3` on Windows,
 just macOS's equivalent). Uninstalling the app does not delete this
 automatically.
+
+`webview.start()` must be called with `private_mode=False` — pywebview
+defaults `private_mode` to `True`, which wipes all local storage (every
+saved task) on every single launch, not just reinstalls. This is easy to
+reintroduce by accident if `webview.start()` ever gets called without
+that argument again.
 
 ## Uninstall
 

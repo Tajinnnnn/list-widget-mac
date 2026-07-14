@@ -54,7 +54,12 @@ def position_near_menu_bar():
         # Distance from the top of the screen down to the top of the usable
         # area — i.e. the menu bar's height (varies with notch displays).
         menu_bar_height = full.size.height - (visible_frame.origin.y + visible_frame.size.height)
-        x = full.size.width - WINDOW_WIDTH - SCREEN_MARGIN
+        # Use the window's actual current width, not the WINDOW_WIDTH default
+        # — otherwise repositioning after a manual resize shifts the window
+        # (and everything in it, including the traffic lights) off its
+        # intended spot, since it'd assume the pre-resize width.
+        current_width = window.native.frame().size.width if window.native else WINDOW_WIDTH
+        x = full.size.width - current_width - SCREEN_MARGIN
         y = menu_bar_height + SCREEN_MARGIN
         window.move(x, y)
     except Exception:
