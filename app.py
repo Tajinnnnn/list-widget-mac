@@ -132,6 +132,58 @@ def configure_window_chrome():
     AppHelper.callAfter(_apply)
 
 
+def apply_vibrancy(enabled):
+    # pywebview only supports vibrancy/transparent as create_window()-time
+    # constructor flags, so toggling it live from a Settings switch means
+    # reaching into the same private bits pywebview itself would use: the
+    # actual WKWebView (via BrowserView.instances, keyed by window uid) and
+    # an NSVisualEffectView inserted behind it.
+    def _apply():
+        try:
+            from webview.platforms.cocoa import BrowserView
+
+            browser_view = BrowserView.instances.get("master")
+            if browser_view is None:
+                return
+            webview_native = browser_view.webview
+            ns_window = browser_view.window
+
+            webview_native.setValue_forKey_(bool(enabled), "drawsTransparentBackground")
+            ns_window.setOpaque_(not enabled)
+
+            effect = getattr(browser_view, "_vibrancy_view", None)
+            if enabled:
+                if effect is None:
+                    effect = AppKit.NSVisualEffectView.alloc().initWithFrame_(
+                        webview_native.bounds()
+                    )
+                    effect.setAutoresizingMask_(
+                        AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
+                    )
+                    effect.setWantsLayer_(True)
+                    effect.setState_(AppKit.NSVisualEffectStateActive)
+                    effect.setMaterial_(AppKit.NSVisualEffectMaterialSidebar)
+                    effect.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
+                    webview_native.superview().addSubview_positioned_relativeTo_(
+                        effect, AppKit.NSWindowBelow, webview_native
+                    )
+                    browser_view._vibrancy_view = effect
+                else:
+                    effect.setHidden_(False)
+            elif effect is not None:
+                effect.setHidden_(True)
+        except Exception:
+            pass
+
+    AppHelper.callAfter(_apply)
+
+
+class JsApi:
+    def set_vibrancy(self, enabled):
+        apply_vibrancy(bool(enabled))
+        return True
+
+
 class TrayIcon(pystray.Icon):
     """Left-click toggles the window directly; right-click shows a small
     Hide/Quit menu. Plain pystray always pops the attached menu open on any
@@ -226,6 +278,7 @@ if __name__ == "__main__":
         min_size=(300, 400),
         background_color="#16181d",
         hidden=True,
+        js_api=JsApi(),
     )
     window.events.closing += on_closing
     window.events.loaded += configure_window_chrome

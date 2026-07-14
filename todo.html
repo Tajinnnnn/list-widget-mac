@@ -35,6 +35,10 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  body.vibrancy { background: rgba(22, 24, 29, 0.55); }
+  @media (prefers-color-scheme: light) {
+    body.vibrancy { background: rgba(246, 247, 249, 0.6); }
+  }
   .app {
     width: 100%;
     max-width: 460px;
@@ -51,7 +55,6 @@
        directly over the content now that the titlebar is transparent */
     padding: 28px 24px 10px 76px;
   }
-  header h1 { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
   header .count { font-size: 12px; color: var(--muted); margin-left: auto; }
   .icon-btn {
     background: none;
@@ -89,6 +92,44 @@
   @media (prefers-color-scheme: light) {
     .settings-row select { color-scheme: light; }
   }
+  .settings-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 24px;
+    flex: none;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .switch-track {
+    position: absolute;
+    inset: 0;
+    background: var(--line);
+    border-radius: 24px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .switch-track::before {
+    content: "";
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    left: 3px;
+    top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform .15s;
+  }
+  .switch input:checked + .switch-track { background: var(--accent); }
+  .switch input:checked + .switch-track::before { transform: translateX(16px); }
 
   .completed-at {
     font-size: 11.5px;
@@ -406,7 +447,6 @@
 <div class="app">
   <header>
     <button id="backBtn" class="icon-btn" title="Back" hidden>←</button>
-    <h1 id="viewTitle">List</h1>
     <span class="count" id="count"></span>
     <button id="archiveBtn" class="icon-btn" title="Completed tasks">🗂️</button>
     <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
@@ -419,7 +459,6 @@
   <ul id="list"></ul>
   <footer>
     <span id="left"></span>
-    <button id="clear" style="margin-left:auto">Clear completed now</button>
   </footer>
 </div>
 
@@ -558,6 +597,7 @@
     });
     if (!result.settings) result.settings = {};
     if (!result.settings.retention) result.settings.retention = "endOfDay";
+    if (result.settings.vibrancy === undefined) result.settings.vibrancy = false;
     return result;
   }
 
@@ -1029,8 +1069,50 @@
     hint.textContent = "Completed tasks stay in the Completed tab until this runs, then they're gone for good.";
 
     row.append(label, select, hint);
-    view.appendChild(row);
+
+    const vibrancyRow = document.createElement("div");
+    vibrancyRow.className = "settings-row";
+
+    const vibrancyHeader = document.createElement("div");
+    vibrancyHeader.className = "settings-switch-row";
+
+    const vibrancyLabel = document.createElement("label");
+    vibrancyLabel.htmlFor = "vibrancyToggle";
+    vibrancyLabel.textContent = "Translucent background";
+
+    const switchLabel = document.createElement("label");
+    switchLabel.className = "switch";
+    const vibrancyToggle = document.createElement("input");
+    vibrancyToggle.type = "checkbox";
+    vibrancyToggle.id = "vibrancyToggle";
+    vibrancyToggle.checked = !!state.settings.vibrancy;
+    const switchTrack = document.createElement("span");
+    switchTrack.className = "switch-track";
+    switchLabel.append(vibrancyToggle, switchTrack);
+
+    vibrancyToggle.onchange = () => {
+      state.settings.vibrancy = vibrancyToggle.checked;
+      save();
+      applyVibrancy(state.settings.vibrancy);
+    };
+
+    vibrancyHeader.append(vibrancyLabel, switchLabel);
+
+    const vibrancyHint = document.createElement("div");
+    vibrancyHint.className = "hint";
+    vibrancyHint.textContent = "Frosted, see-through background like Control Center.";
+
+    vibrancyRow.append(vibrancyHeader, vibrancyHint);
+
+    view.append(row, vibrancyRow);
     list.appendChild(view);
+  }
+
+  function applyVibrancy(enabled) {
+    document.body.classList.toggle("vibrancy", !!enabled);
+    if (window.pywebview && window.pywebview.api) {
+      window.pywebview.api.set_vibrancy(!!enabled);
+    }
   }
 
   function toggleDueEdit(i, container) {
@@ -1142,30 +1224,18 @@
     save(); renderList();
   };
 
-  document.getElementById("clear").onclick = () => {
-    const al = activeList();
-    al.items = al.items.filter(x => !x.done);
-    save(); renderList();
-  };
-
   const backBtn = document.getElementById("backBtn");
   const archiveBtn = document.getElementById("archiveBtn");
   const settingsBtn = document.getElementById("settingsBtn");
-  const viewTitle = document.getElementById("viewTitle");
   const tabsContainer = document.getElementById("tabs");
   const addForm = document.getElementById("form");
-  const clearBtn = document.getElementById("clear");
-
-  const VIEW_TITLES = { active: "List", completed: "Completed", settings: "Settings" };
 
   function setViewMode(mode) {
     viewMode = viewMode === mode ? "active" : mode;
     backBtn.hidden = viewMode === "active";
     archiveBtn.classList.toggle("active", viewMode === "completed");
     settingsBtn.classList.toggle("active", viewMode === "settings");
-    viewTitle.textContent = VIEW_TITLES[viewMode];
     addForm.hidden = viewMode !== "active";
-    clearBtn.hidden = viewMode !== "active";
     tabsContainer.hidden = viewMode !== "active";
     renderList();
   }
@@ -1201,4 +1271,11 @@
 
   renderTabs();
   renderList();
+
+  // window.pywebview.api isn't ready until this event fires.
+  if (window.pywebview && window.pywebview.api) {
+    applyVibrancy(state.settings.vibrancy);
+  } else {
+    window.addEventListener("pywebviewready", () => applyVibrancy(state.settings.vibrancy), { once: true });
+  }
 </script>

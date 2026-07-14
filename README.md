@@ -32,11 +32,17 @@ system-tray version (`pywebview` + `pystray`) to macOS.
   rather than disappearing — restore or permanently delete them there.
 - **Settings** (⚙️ in the header) controls how long completed tasks stick
   around before being purged for good: end of day, after N hours, or
-  never (manual clear only via the footer button).
-- Seamless window chrome: no title text, no titlebar strip — the traffic
-  lights float directly over the app's own dark background (see
-  "Seamless titlebar" below for how, since it's not a documented
-  pywebview option).
+  never. There's no separate manual "clear" button — completed tasks
+  live in the Completed view (restore/delete individually) until the
+  retention timer sweeps them.
+- Settings also has a "Translucent background" switch — a frosted,
+  see-through look like Control Center, via a live-toggleable
+  `NSVisualEffectView` (see "Live vibrancy toggle" below).
+- Seamless window chrome: no title text, no titlebar strip, no header
+  label — just the archive/settings icons, with the traffic lights
+  floating directly over the app's own background (see "Seamless
+  titlebar" below for how, since it's not a documented pywebview
+  option).
 
 ## Develop
 
@@ -102,6 +108,22 @@ rm -rf /Applications/List.app
 rm -rf ~/Library/Application\ Support/List   # single-instance lock file
 rm -rf ~/Library/WebKit/club.build4fun.listwidget   # saved tasks
 ```
+
+## Live vibrancy toggle
+
+pywebview only supports a translucent/blurred window via `vibrancy=True`
+and `transparent=True` passed to `create_window()` — both constructor-time
+only, so they can't back a runtime Settings switch without recreating the
+window. Instead, `app.py` exposes a `JsApi.set_vibrancy(enabled)` method via
+pywebview's `js_api=` bridge (`window.pywebview.api.set_vibrancy(...)` from
+JS, available after the `pywebviewready` event fires). That method reaches
+into `webview.platforms.cocoa.BrowserView.instances["master"]` to grab the
+actual `WKWebView` and `NSWindow` pywebview created, then does by hand what
+`vibrancy=True`/`transparent=True` would have done at startup: sets
+`drawsTransparentBackground` on the webview, makes the window non-opaque,
+and inserts an `NSVisualEffectView` behind the webview. `todo.html` toggles
+a `body.vibrancy` CSS class (translucent instead of solid `--bg`) in lock
+step so the blur actually shows through.
 
 ## Seamless titlebar (why `app.py` pokes at private-ish AppKit views)
 
