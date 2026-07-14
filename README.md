@@ -118,6 +118,15 @@ saved task) on every single launch, not just reinstalls. This is easy to
 reintroduce by accident if `webview.start()` ever gets called without
 that argument again.
 
+That fix has a side effect worth knowing about while developing: WebKit's
+disk/memory cache for `todo.html` now also survives restarts (previously,
+wiping *everything* on launch incidentally wiped the HTML cache too, which
+masked this). Editing `todo.html` and relaunching could silently keep
+showing the old cached version. `clear_webkit_cache()` (called once at
+startup, before the window loads) clears just the cache data types —
+`WKWebsiteDataTypeDiskCache` / `WKWebsiteDataTypeMemoryCache` — leaving
+local storage alone.
+
 ## Uninstall
 
 ```bash
@@ -146,25 +155,36 @@ step so the blur actually shows through.
 
 ## Seamless titlebar (why `app.py` pokes at private-ish AppKit views)
 
-`configure_window_chrome()` (hung off `window.events.loaded`, since
-`window.native` — the actual `NSWindow` — doesn't exist until pywebview
-builds it inside `webview.start()`) does three things:
+The goal: the traffic lights float inline with our own header controls (like
+Claude Desktop), with no separate titlebar strip/seam at all. Getting there
+took more than transparency tricks — `configure_window_chrome()` (hung off
+`window.events.loaded`, since `window.native` doesn't exist until pywebview
+builds it inside `webview.start()`, and has to run via `AppHelper.callAfter`
+since that event fires off the main thread) does, in order:
 
 1. `setTitlebarAppearsTransparent_(True)` + `setTitleVisibility_(NSWindowTitleHidden)`
-   + adds `NSWindowStyleMaskFullSizeContentView` to the style mask — the
-   documented way to hide the title text and let content draw behind the
-   titlebar.
-2. `setBackgroundColor_(...)` on the window itself, matching `--bg`.
-3. Overrides the background color of `window.contentView().superview().subviews().lastObject()`
-   — pywebview's own `cocoa.py` explicitly recolors this exact view (the
-   titlebar's decoration view) to `NSColor.windowBackgroundColor()` right
-   after creating the window "so it does not change with the window
-   color". That system gray is what shows up as a seam above the traffic
-   lights if you only do (1) and (2) — (3) is what actually removes it.
-
-All of this has to run via `AppHelper.callAfter`, since the `loaded` event
-fires off the main thread and NSWindow won't allow geometry/style changes
-from anywhere else.
+   + `NSWindowStyleMaskFullSizeContentView` — hides the title text and lets
+   content draw behind the titlebar. On its own this still leaves a visible
+   seam: the native titlebar container reserves its full historical height
+   as an (invisible but blocking) overlay, so anything our own content
+   draws in that band renders *behind* it, not on top.
+2. Grabs the three standard buttons via `standardWindowButton_` and
+   re-parents them directly into the content view, positioned with Auto
+   Layout constraints (not a fixed frame — a frame doesn't move when the
+   window resizes, which just re-breaks the alignment).
+3. Just removing the buttons from the titlebar doesn't stick on its own —
+   as long as the window is still "titled", AppKit's own chrome-management
+   machinery notices they're missing and puts fresh ones right back. The
+   fix is to change the style mask to drop `NSWindowStyleMaskTitled`
+   entirely (closable/resizable/miniaturizable are independent bits and
+   stay on) — but a borderless window loses its automatic rounded corners
+   and shadow, so those get reconstructed by hand: `setHasShadow_(True)`,
+   and a `CALayer` corner radius + `masksToBounds` on the content view.
+   `setMovableByWindowBackground_(True)` is set too, though it mostly does
+   nothing here since the WKWebView covers nearly the entire window (no
+   native "background" left to grab-drag from) — acceptable since this
+   window repositions itself near the menu bar every time it's shown
+   anyway.
 
 ## The Dock icon flip (why `app.py` re-asserts activation policy)
 

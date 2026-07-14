@@ -9,6 +9,7 @@ from pathlib import Path
 import AppKit
 import pystray
 import webview
+import WebKit
 from PIL import Image
 from PyObjCTools import AppHelper
 
@@ -38,6 +39,26 @@ def already_running():
         return False
     except OSError:
         return True
+
+
+def clear_webkit_cache():
+    # Fixing the private_mode data wipe (see notification_loop/__main__)
+    # had a side effect: WebKit's disk/memory cache for todo.html now also
+    # persists across restarts, so editing the file and relaunching could
+    # silently keep showing the old cached version. Clear only the cache
+    # data types here — NOT local storage, which is exactly what we just
+    # fixed to stop wiping.
+    try:
+        data_store = WebKit.WKWebsiteDataStore.defaultDataStore()
+        cache_types = {
+            WebKit.WKWebsiteDataTypeDiskCache,
+            WebKit.WKWebsiteDataTypeMemoryCache,
+        }
+        data_store.removeDataOfTypes_modifiedSince_completionHandler_(
+            cache_types, AppKit.NSDate.dateWithTimeIntervalSince1970_(0), lambda: None
+        )
+    except Exception:
+        pass
 
 
 window = None
@@ -108,15 +129,6 @@ def _window_bg_color():
     )
 
 
-def _decoration_view(ns_window):
-    # pywebview itself explicitly recolors this exact view — the titlebar's
-    # decoration view — to NSColor.windowBackgroundColor() right after
-    # creating the window, specifically so it "does not change with the
-    # window color". That system gray is the visible seam above the
-    # traffic lights unless we override it with our own color instead.
-    return ns_window.contentView().superview().subviews().lastObject()
-
-
 def configure_window_chrome():
     # window.native (the NSWindow) only exists once pywebview has actually
     # built the native window, which happens lazily inside webview.start() —
@@ -135,11 +147,59 @@ def configure_window_chrome():
             )
             ns_window.setBackgroundColor_(_window_bg_color())
 
-            decoration_view = _decoration_view(ns_window)
-            if decoration_view is not None:
-                decoration_view.setBackgroundColor_(_window_bg_color())
-        except Exception:
-            pass
+            content_view = ns_window.contentView()
+
+            # Grab the three standard buttons *before* going borderless —
+            # standardWindowButton_ only returns real controls for a titled
+            # window. Reparent them into the content view so they survive
+            # losing the .titled bit next. Anchored via Auto Layout (not a
+            # fixed frame) so they stay pinned to the top-left corner
+            # correctly when the window is resized, regardless of the
+            # content view's flipped-ness.
+            button_center_y = 17
+            start_x = 13
+            spacing = 20
+
+            for index, button_type in enumerate((
+                AppKit.NSWindowCloseButton,
+                AppKit.NSWindowMiniaturizeButton,
+                AppKit.NSWindowZoomButton,
+            )):
+                button = ns_window.standardWindowButton_(button_type)
+                if button is None:
+                    continue
+                button.retain()
+                button.removeFromSuperview()
+                button.setTranslatesAutoresizingMaskIntoConstraints_(False)
+                content_view.addSubview_(button)
+                x = start_x + index * spacing
+                button.leadingAnchor().constraintEqualToAnchor_constant_(
+                    content_view.leadingAnchor(), x
+                ).setActive_(True)
+                button.centerYAnchor().constraintEqualToAnchor_constant_(
+                    content_view.topAnchor(), button_center_y
+                ).setActive_(True)
+
+            # Removing the buttons alone doesn't stick — as long as the
+            # window is still "titled", AppKit's own window-chrome upkeep
+            # just puts fresh ones back in the titlebar. Going fully
+            # borderless (while keeping resizable/closable/miniaturizable,
+            # which are independent of the .titled bit) stops that, but
+            # loses the automatic rounded corners + shadow, so those need
+            # to be reconstructed by hand.
+            mask = ns_window.styleMask()
+            mask &= ~AppKit.NSWindowStyleMaskTitled
+            ns_window.setStyleMask_(mask)
+            ns_window.setHasShadow_(True)
+            ns_window.setMovableByWindowBackground_(True)
+
+            content_view.setWantsLayer_(True)
+            layer = content_view.layer()
+            layer.setCornerRadius_(10.0)
+            layer.setMasksToBounds_(True)
+        except Exception as e:
+            with open("/tmp/list_reparent_debug.log", "a") as f:
+                f.write(f"EXCEPTION: {e!r}\n")
 
     AppHelper.callAfter(_apply)
 
@@ -163,15 +223,8 @@ def apply_vibrancy(enabled):
             webview_native.setValue_forKey_(bool(enabled), "drawsTransparentBackground")
             ns_window.setOpaque_(not enabled)
 
-            # The decoration view paints its own solid fill regardless of
-            # what's behind it, so it has to be told about vibrancy too —
-            # otherwise it shows up as an opaque seam above the traffic
-            # lights once the content below it turns translucent.
-            decoration_view = _decoration_view(ns_window)
-            if decoration_view is not None:
-                decoration_view.setBackgroundColor_(
-                    AppKit.NSColor.clearColor() if enabled else _window_bg_color()
-                )
+            # (The old titlebar decoration view that used to cause a seam
+            # here is permanently hidden now — see configure_window_chrome.)
 
             effect = getattr(browser_view, "_vibrancy_view", None)
             if enabled:
@@ -290,6 +343,8 @@ def notification_loop():
 if __name__ == "__main__":
     if already_running():
         sys.exit(0)
+
+    clear_webkit_cache()
 
     html_path = resource_path("todo.html")
     window = webview.create_window(
