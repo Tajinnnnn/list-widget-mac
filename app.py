@@ -97,6 +97,21 @@ def on_closing():
     return False
 
 
+def _window_bg_color():
+    return AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(
+        0x16 / 255, 0x18 / 255, 0x1D / 255, 1.0
+    )
+
+
+def _decoration_view(ns_window):
+    # pywebview itself explicitly recolors this exact view — the titlebar's
+    # decoration view — to NSColor.windowBackgroundColor() right after
+    # creating the window, specifically so it "does not change with the
+    # window color". That system gray is the visible seam above the
+    # traffic lights unless we override it with our own color instead.
+    return ns_window.contentView().superview().subviews().lastObject()
+
+
 def configure_window_chrome():
     # window.native (the NSWindow) only exists once pywebview has actually
     # built the native window, which happens lazily inside webview.start() —
@@ -113,19 +128,11 @@ def configure_window_chrome():
             ns_window.setStyleMask_(
                 ns_window.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView
             )
-            dark_color = AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(
-                0x16 / 255, 0x18 / 255, 0x1D / 255, 1.0
-            )
-            ns_window.setBackgroundColor_(dark_color)
+            ns_window.setBackgroundColor_(_window_bg_color())
 
-            # pywebview itself explicitly recolors this exact view — the
-            # titlebar's decoration view — to NSColor.windowBackgroundColor()
-            # right after creating the window, specifically so it "does not
-            # change with the window color". That system gray is the visible
-            # seam above the traffic lights; override it with our own color.
-            decoration_view = ns_window.contentView().superview().subviews().lastObject()
+            decoration_view = _decoration_view(ns_window)
             if decoration_view is not None:
-                decoration_view.setBackgroundColor_(dark_color)
+                decoration_view.setBackgroundColor_(_window_bg_color())
         except Exception:
             pass
 
@@ -150,6 +157,16 @@ def apply_vibrancy(enabled):
 
             webview_native.setValue_forKey_(bool(enabled), "drawsTransparentBackground")
             ns_window.setOpaque_(not enabled)
+
+            # The decoration view paints its own solid fill regardless of
+            # what's behind it, so it has to be told about vibrancy too —
+            # otherwise it shows up as an opaque seam above the traffic
+            # lights once the content below it turns translucent.
+            decoration_view = _decoration_view(ns_window)
+            if decoration_view is not None:
+                decoration_view.setBackgroundColor_(
+                    AppKit.NSColor.clearColor() if enabled else _window_bg_color()
+                )
 
             effect = getattr(browser_view, "_vibrancy_view", None)
             if enabled:
@@ -306,4 +323,7 @@ if __name__ == "__main__":
 
     AppHelper.callLater(0.2, _reassert_accessory_policy)
 
-    webview.start()
+    # pywebview defaults private_mode to True, which wipes ALL local
+    # storage (i.e. every saved task) on every single launch — not just
+    # rebuilds. This is the fix for that.
+    webview.start(private_mode=False)
