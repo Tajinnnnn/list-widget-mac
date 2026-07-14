@@ -33,6 +33,10 @@ system-tray version (`pywebview` + `pystray`) to macOS.
 - **Settings** (⚙️ in the header) controls how long completed tasks stick
   around before being purged for good: end of day, after N hours, or
   never (manual clear only via the footer button).
+- Seamless window chrome: no title text, no titlebar strip — the traffic
+  lights float directly over the app's own dark background (see
+  "Seamless titlebar" below for how, since it's not a documented
+  pywebview option).
 
 ## Develop
 
@@ -98,6 +102,28 @@ rm -rf /Applications/List.app
 rm -rf ~/Library/Application\ Support/List   # single-instance lock file
 rm -rf ~/Library/WebKit/club.build4fun.listwidget   # saved tasks
 ```
+
+## Seamless titlebar (why `app.py` pokes at private-ish AppKit views)
+
+`configure_window_chrome()` (hung off `window.events.loaded`, since
+`window.native` — the actual `NSWindow` — doesn't exist until pywebview
+builds it inside `webview.start()`) does three things:
+
+1. `setTitlebarAppearsTransparent_(True)` + `setTitleVisibility_(NSWindowTitleHidden)`
+   + adds `NSWindowStyleMaskFullSizeContentView` to the style mask — the
+   documented way to hide the title text and let content draw behind the
+   titlebar.
+2. `setBackgroundColor_(...)` on the window itself, matching `--bg`.
+3. Overrides the background color of `window.contentView().superview().subviews().lastObject()`
+   — pywebview's own `cocoa.py` explicitly recolors this exact view (the
+   titlebar's decoration view) to `NSColor.windowBackgroundColor()` right
+   after creating the window "so it does not change with the window
+   color". That system gray is what shows up as a seam above the traffic
+   lights if you only do (1) and (2) — (3) is what actually removes it.
+
+All of this has to run via `AppHelper.callAfter`, since the `loaded` event
+fires off the main thread and NSWindow won't allow geometry/style changes
+from anywhere else.
 
 ## The Dock icon flip (why `app.py` re-asserts activation policy)
 

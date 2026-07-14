@@ -97,6 +97,41 @@ def on_closing():
     return False
 
 
+def configure_window_chrome():
+    # window.native (the NSWindow) only exists once pywebview has actually
+    # built the native window, which happens lazily inside webview.start() —
+    # not yet when create_window() returns. "loaded" fires after that, but
+    # from a background thread, so the actual mutation has to hop back to
+    # the main thread (NSWindow geometry/style changes require it).
+    def _apply():
+        try:
+            ns_window = window.native
+            if ns_window is None:
+                return
+            ns_window.setTitlebarAppearsTransparent_(True)
+            ns_window.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+            ns_window.setStyleMask_(
+                ns_window.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView
+            )
+            dark_color = AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(
+                0x16 / 255, 0x18 / 255, 0x1D / 255, 1.0
+            )
+            ns_window.setBackgroundColor_(dark_color)
+
+            # pywebview itself explicitly recolors this exact view — the
+            # titlebar's decoration view — to NSColor.windowBackgroundColor()
+            # right after creating the window, specifically so it "does not
+            # change with the window color". That system gray is the visible
+            # seam above the traffic lights; override it with our own color.
+            decoration_view = ns_window.contentView().superview().subviews().lastObject()
+            if decoration_view is not None:
+                decoration_view.setBackgroundColor_(dark_color)
+        except Exception:
+            pass
+
+    AppHelper.callAfter(_apply)
+
+
 class TrayIcon(pystray.Icon):
     """Left-click toggles the window directly; right-click shows a small
     Hide/Quit menu. Plain pystray always pops the attached menu open on any
@@ -193,6 +228,7 @@ if __name__ == "__main__":
         hidden=True,
     )
     window.events.closing += on_closing
+    window.events.loaded += configure_window_chrome
 
     # pywebview's Cocoa backend defaults the app to a Regular activation
     # policy (Dock icon + Cmd+Tab entry) as soon as it's imported above.

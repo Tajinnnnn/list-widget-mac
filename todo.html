@@ -44,9 +44,12 @@
   }
   header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 10px;
-    padding: 16px 20px 10px;
+    /* extra left padding clears the traffic-light buttons, and extra top
+       padding clears the window's rounded top corners — both float
+       directly over the content now that the titlebar is transparent */
+    padding: 28px 24px 10px 76px;
   }
   header h1 { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
   header .count { font-size: 12px; color: var(--muted); margin-left: auto; }
