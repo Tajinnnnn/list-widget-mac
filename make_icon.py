@@ -65,26 +65,42 @@ def draw_app_icon(size):
 
 
 def draw_menubar_glyph(size):
-    """Simple checkbox glyph for the menu bar status item (no panel bg)."""
+    """Monochrome checklist/clipboard glyph for the menu bar status item.
+
+    Drawn as solid black + alpha only (no color) so app.py can mark the
+    resulting NSImage as a template image -- macOS then re-tints it
+    automatically to match the current menu bar (dark glyph in light
+    mode, light glyph in dark mode), the same way native menu bar icons
+    behave, instead of showing a fixed color.
+    """
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    margin = round(size * 0.12)
+    black = (0, 0, 0, 255)
+
+    left, top, right, bottom = size * 0.20, size * 0.18, size * 0.80, size * 0.87
+    body_w = max(2, round(size * 0.075))
     draw.rounded_rectangle(
-        [margin, margin, size - margin, size - margin],
-        radius=round(size * 0.22),
-        fill=ACCENT,
+        [left, top, right, bottom], radius=size * 0.09, outline=black, width=body_w
     )
-    w = max(2, round(size * 0.09))
-    draw.line(
-        [
-            (size * 0.30, size * 0.52),
-            (size * 0.44, size * 0.68),
-            (size * 0.72, size * 0.32),
-        ],
-        fill=WHITE,
-        width=w,
-        joint="curve",
+
+    clip_w, clip_h = size * 0.26, size * 0.11
+    clip_x0 = size / 2 - clip_w / 2
+    clip_y0 = top - clip_h * 0.55
+    draw.rounded_rectangle(
+        [clip_x0, clip_y0, clip_x0 + clip_w, clip_y0 + clip_h],
+        radius=clip_h * 0.35,
+        fill=black,
     )
+
+    line_h = max(2, round(size * 0.06))
+    line_left = left + size * 0.11
+    for frac, w_frac in [(0.36, 0.42), (0.55, 0.42), (0.74, 0.28)]:
+        y = size * frac
+        lw = size * w_frac
+        draw.rounded_rectangle(
+            [line_left, y, line_left + lw, y + line_h], radius=line_h / 2, fill=black
+        )
+
     return img
 
 
@@ -117,7 +133,7 @@ def build_icns():
 
 
 def build_menubar_png():
-    draw_menubar_glyph(44).save(HERE / "menubar_icon.png")
+    draw_menubar_glyph(128).save(HERE / "menubar_icon.png")
     print("saved menubar_icon.png")
 
 

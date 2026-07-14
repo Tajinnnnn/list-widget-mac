@@ -230,6 +230,12 @@
     cursor: pointer;
   }
   .due-edit button:hover { color: var(--danger); }
+  .due-edit .cal-btn {
+    font-size: 15px;
+    padding: 2px 4px;
+    flex: none;
+  }
+  .due-edit .cal-btn:hover { color: var(--accent); }
   .empty { text-align: center; color: var(--muted); padding: 40px 20px; font-size: 14px; }
   footer {
     display: flex; align-items: center; gap: 12px;
@@ -389,10 +395,16 @@
     inp.onclick = ev => ev.stopPropagation();
   }
 
-  function toLocalInputValue(iso) {
+  function toDateInputValue(iso) {
     const d = new Date(iso);
     const pad = n => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  function toTimeInputValue(iso) {
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   function formatDue(iso) {
@@ -510,17 +522,37 @@
     const row = document.createElement("div");
     row.className = "due-edit-row";
 
-    const inp = document.createElement("input");
-    inp.type = "datetime-local";
-    if (items[i].due) inp.value = toLocalInputValue(items[i].due);
+    const calBtn = document.createElement("button");
+    calBtn.type = "button";
+    calBtn.className = "cal-btn";
+    calBtn.textContent = "📅";
+    calBtn.title = "Pick a date";
 
-    inp.onchange = () => {
-      if (inp.value) {
-        items[i].due = new Date(inp.value).toISOString();
-        items[i].notified = false;
-      }
+    const dateInp = document.createElement("input");
+    dateInp.type = "date";
+    const timeInp = document.createElement("input");
+    timeInp.type = "time";
+
+    calBtn.onclick = () => {
+      if (typeof dateInp.showPicker === "function") dateInp.showPicker();
+      else dateInp.focus();
+    };
+
+    if (items[i].due) {
+      dateInp.value = toDateInputValue(items[i].due);
+      timeInp.value = toTimeInputValue(items[i].due);
+    } else {
+      timeInp.value = "09:00";
+    }
+
+    const commitDue = () => {
+      if (!dateInp.value) return;
+      items[i].due = new Date(`${dateInp.value}T${timeInp.value || "09:00"}`).toISOString();
+      items[i].notified = false;
       save(); renderList();
     };
+    dateInp.onchange = commitDue;
+    timeInp.onchange = commitDue;
 
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
@@ -532,7 +564,7 @@
       save(); renderList();
     };
 
-    row.append(inp, clearBtn);
+    row.append(calBtn, dateInp, timeInp, clearBtn);
 
     const repeatSelect = document.createElement("select");
     [["", "Doesn't repeat"], ["daily", "Repeats daily"], ["weekly", "Repeats weekly"], ["monthly", "Repeats monthly"]]
@@ -550,7 +582,7 @@
 
     wrap.append(row, repeatSelect);
     container.appendChild(wrap);
-    inp.focus();
+    dateInp.focus();
   }
 
   function edit(i, el) {

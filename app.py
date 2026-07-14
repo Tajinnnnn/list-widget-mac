@@ -117,7 +117,18 @@ def setup_tray():
         menu,
         darwin_nsapplication=AppKit.NSApplication.sharedApplication(),
     )
-    tray_icon.run_detached()
+
+    def _setup(icon):
+        icon.visible = True
+        # pystray doesn't mark the NSImage as a template image, so it would
+        # otherwise render as flat black instead of adapting to light/dark
+        # menu bars like native menu bar icons do.
+        try:
+            icon._status_item.button().image().setTemplate_(True)
+        except Exception:
+            pass
+
+    tray_icon.run_detached(setup=_setup)
 
 
 def applescript_quote(s):
