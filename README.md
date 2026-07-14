@@ -23,6 +23,8 @@ system-tray version (`pywebview` + `pystray`) to macOS.
 
 - Tabs for multiple lists, pinning, due dates/repeats with a native
   calendar picker, native macOS notifications for due tasks.
+- Right-click a tab to rename it or set a color (preset swatches or a
+  native color-wheel picker via a hidden `<input type="color">`).
 - Adding a task plays a soft "bubble pop" sound and slides the row in;
   checking one off plays a warm "check" sound and slides it away —
   synthesized at runtime via the Web Audio API (no bundled audio files).
