@@ -1,20 +1,36 @@
 # List (macOS menu bar widget)
 
-A small to-do list that lives in the menu bar — click the icon to pop open
-a list, click away or hit the tray "Hide" to tuck it away again. Ported
-from a Windows system-tray version (`pywebview` + `pystray`) to macOS.
+A small to-do list that lives in the menu bar — left-click the icon to pop
+the list open directly, right-click for Hide/Quit. Ported from a Windows
+system-tray version (`pywebview` + `pystray`) to macOS.
 
 ## Project layout
 
-- `todo.html` — the entire UI/logic (tabs, due dates, repeats, localStorage
-  persistence). Pure HTML/JS, unchanged from the Windows version.
+- `todo.html` — the entire UI/logic (tabs, due dates, repeats, sounds,
+  animations, the Completed/Settings views, localStorage persistence).
+  Pure HTML/JS.
 - `app.py` — the native shell: creates the hidden `pywebview` window, the
-  menu bar icon (`pystray`), positions the window under the menu bar,
+  menu bar icon (`pystray`, left-click toggles the window directly,
+  right-click shows Hide/Quit), positions the window under the menu bar,
   fires native notifications for due tasks, and enforces single-instance.
 - `make_icon.py` — generates `icon.icns` (app icon) and `menubar_icon.png`
-  (status bar glyph) from a small vector drawing.
+  (status bar glyph, a monochrome template image) from a small vector
+  drawing.
 - `list.spec` — PyInstaller build spec that bundles everything into
   `List.app`, with `LSUIElement` set so it never shows a Dock icon.
+
+## Features
+
+- Tabs for multiple lists, pinning, due dates/repeats with a native
+  calendar picker, native macOS notifications for due tasks.
+- Adding a task plays a soft "bubble pop" sound and slides the row in;
+  checking one off plays a warm "check" sound and slides it away —
+  synthesized at runtime via the Web Audio API (no bundled audio files).
+- Checked-off tasks move to the **Completed** view (🗂️ in the header)
+  rather than disappearing — restore or permanently delete them there.
+- **Settings** (⚙️ in the header) controls how long completed tasks stick
+  around before being purged for good: end of day, after N hours, or
+  never (manual clear only via the footer button).
 
 ## Develop
 

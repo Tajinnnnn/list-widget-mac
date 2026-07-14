@@ -50,6 +50,59 @@
   }
   header h1 { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
   header .count { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .icon-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 3px;
+    flex: none;
+  }
+  .icon-btn:hover { color: var(--accent); }
+  .icon-btn.active { color: var(--accent); }
+
+  .settings-view { padding: 8px 20px; }
+  .settings-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-row label { font-size: 14px; font-weight: 500; }
+  .settings-row .hint { font-size: 12px; color: var(--muted); }
+  .settings-row select {
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 10px;
+    outline: none;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    .settings-row select { color-scheme: light; }
+  }
+
+  .completed-at {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+  .restore-btn {
+    opacity: 0;
+    background: none; border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 13px;
+    flex: none;
+  }
+  li:hover .restore-btn { opacity: 1; }
+  .restore-btn:hover { color: var(--accent); }
 
   .tabs {
     display: flex;
@@ -112,6 +165,9 @@
     gap: 8px;
     padding: 4px 20px 14px;
   }
+  /* the [hidden] attribute alone can't win against a plain-class display
+     rule of equal specificity, so pair it with the class explicitly */
+  .add[hidden], .tabs[hidden] { display: none; }
   .add input {
     flex: 1;
     background: var(--panel);
@@ -143,6 +199,18 @@
     border-radius: 9px;
   }
   li:hover { background: var(--panel); }
+  @keyframes item-enter {
+    from { transform: translateX(-26px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes item-leave {
+    to { transform: translateX(140%); opacity: 0; }
+  }
+  li.entering { animation: item-enter .3s cubic-bezier(.2,.8,.2,1); }
+  li.leaving {
+    animation: item-leave .32s cubic-bezier(.4,0,.6,1) forwards;
+    pointer-events: none;
+  }
   .box {
     width: 20px; height: 20px;
     margin-top: 1px;
@@ -254,8 +322,11 @@
 
 <div class="app">
   <header>
-    <h1>List</h1>
+    <button id="backBtn" class="icon-btn" title="Back" hidden>←</button>
+    <h1 id="viewTitle">List</h1>
     <span class="count" id="count"></span>
+    <button id="archiveBtn" class="icon-btn" title="Completed tasks">🗂️</button>
+    <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
   </header>
   <div class="tabs" id="tabs"></div>
   <form class="add" id="form">
@@ -265,7 +336,7 @@
   <ul id="list"></ul>
   <footer>
     <span id="left"></span>
-    <button id="clear" style="margin-left:auto">Clear completed</button>
+    <button id="clear" style="margin-left:auto">Clear completed now</button>
   </footer>
 </div>
 
@@ -288,8 +359,87 @@
       if (it.notified === undefined) it.notified = false;
       if (it.pinned === undefined) it.pinned = false;
       if (it.repeat === undefined) it.repeat = null;
+      if (it.completedAt === undefined) it.completedAt = null;
+      if (!it._id) it._id = uid();
     });
     return items || [];
+  }
+
+  // id of the item that should play its "enter" animation on the next
+  // renderList() call — set right before adding/re-inserting an item.
+  let pendingEnterId = null;
+
+  // "active" shows open tasks; "completed" shows the current list's
+  // finished tasks (still just a view over the same underlying data).
+  let viewMode = "active";
+
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  // A warm, low-passed sine "thock" (with a sub-octave layer for body) —
+  // a soft, buttery check sound rather than a bright digital blip.
+  function playCheckSound() {
+    const ctx = getAudioCtx();
+    const t0 = ctx.currentTime;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 1100;
+    filter.Q.value = 0.3;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.4, t0 + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.19);
+    filter.connect(gain).connect(ctx.destination);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(520, t0);
+    osc.frequency.exponentialRampToValueAtTime(180, t0 + 0.16);
+    osc.connect(filter);
+    osc.start(t0);
+    osc.stop(t0 + 0.2);
+
+    const sub = ctx.createOscillator();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(260, t0);
+    sub.frequency.exponentialRampToValueAtTime(90, t0 + 0.16);
+    sub.connect(filter);
+    sub.start(t0);
+    sub.stop(t0 + 0.2);
+  }
+
+  // Four soft, rounded "bubble" blips for adding a task — low-passed sine
+  // waves with a gentle downward glide, warmer than a bright chirp.
+  function playPopSound() {
+    const ctx = getAudioCtx();
+    const t0 = ctx.currentTime;
+    [460, 560, 660, 740].forEach((f, idx) => {
+      const start = t0 + idx * 0.09;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 1400;
+      filter.Q.value = 0.3;
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.3, start + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.13);
+      filter.connect(gain).connect(ctx.destination);
+
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(f * 1.6, start);
+      osc.frequency.exponentialRampToValueAtTime(f, start + 0.05);
+      osc.connect(filter);
+      osc.start(start);
+      osc.stop(start + 0.14);
+    });
   }
 
   function load() {
@@ -315,6 +465,8 @@
     }
 
     result.lists.forEach(l => normalizeItems(l.items));
+    if (!result.settings) result.settings = {};
+    if (!result.settings.retention) result.settings.retention = "endOfDay";
     return result;
   }
 
@@ -322,6 +474,34 @@
 
   function activeList() {
     return state.lists.find(l => l.id === state.active) || state.lists[0];
+  }
+
+  const RETENTION_HOURS = { "1h": 1, "6h": 6, "24h": 24 };
+
+  // Removes completed tasks past their retention window. Completed tasks
+  // stay in place (and viewable) otherwise — this only prunes old ones.
+  function purgeExpiredCompleted() {
+    const retention = state.settings.retention;
+    if (retention === "never") return;
+
+    const now = Date.now();
+    let changed = false;
+
+    state.lists.forEach(l => {
+      const before = l.items.length;
+      l.items = l.items.filter(it => {
+        if (!it.done || !it.completedAt) return true;
+        const completedAt = new Date(it.completedAt).getTime();
+        if (retention === "endOfDay") {
+          return new Date(completedAt).toDateString() === new Date(now).toDateString();
+        }
+        const hours = RETENTION_HOURS[retention] || 24;
+        return now - completedAt < hours * 3600 * 1000;
+      });
+      if (l.items.length !== before) changed = true;
+    });
+
+    if (changed) save();
   }
 
   function renderTabs() {
@@ -429,32 +609,50 @@
   }
 
   function renderList() {
+    if (viewMode === "completed") renderCompletedList();
+    else if (viewMode === "settings") renderSettingsView();
+    else renderActiveList();
+  }
+
+  function renderActiveList() {
     const al = activeList();
     const items = al.items;
     list.innerHTML = "";
-    if (!items.length) {
+
+    // Completed items stay in the data (for counts / the completed view)
+    // but are never rendered here again once done — they "leave" via the
+    // animation in box.onclick, right before this function runs.
+    const order = items.map((_, i) => i)
+      .filter(i => !items[i].done)
+      .sort((a, b) => (items[b].pinned ? 1 : 0) - (items[a].pinned ? 1 : 0));
+
+    if (!order.length) {
       list.innerHTML = '<div class="empty">Nothing here yet — add your first task above.</div>';
     }
-
-    const order = items.map((_, i) => i)
-      .sort((a, b) => (items[b].pinned ? 1 : 0) - (items[a].pinned ? 1 : 0));
 
     order.forEach(i => {
       const it = items[i];
       const li = document.createElement("li");
-      li.className = (it.done ? "done " : "") + (it.pinned ? "pinned-row" : "");
+      li.className = (it.pinned ? "pinned-row " : "");
+      if (it._id && it._id === pendingEnterId) li.classList.add("entering");
 
       const box = document.createElement("div");
       box.className = "box";
       box.onclick = () => {
-        const nowDone = !items[i].done;
-        items[i].done = nowDone;
-        if (nowDone && items[i].repeat && items[i].due) {
-          items[i].due = nextOccurrence(items[i].due, items[i].repeat);
-          items[i].done = false;
-          items[i].notified = false;
-        }
-        save(); renderList();
+        playCheckSound();
+        li.classList.add("leaving");
+        li.addEventListener("animationend", () => {
+          items[i].done = true;
+          items[i].completedAt = new Date().toISOString();
+          if (items[i].repeat && items[i].due) {
+            items[i].due = nextOccurrence(items[i].due, items[i].repeat);
+            items[i].done = false;
+            items[i].completedAt = null;
+            items[i].notified = false;
+            pendingEnterId = items[i]._id;
+          }
+          save(); renderList();
+        }, { once: true });
       };
 
       const txtWrap = document.createElement("div");
@@ -468,7 +666,7 @@
       txtWrap.appendChild(txt);
 
       if (it.due) {
-        const overdue = !it.done && new Date(it.due).getTime() <= Date.now();
+        const overdue = new Date(it.due).getTime() <= Date.now();
         const due = document.createElement("div");
         due.className = "due" + (overdue ? " overdue" : "");
         due.textContent = (overdue ? "Overdue • " : "") + formatDue(it.due) +
@@ -503,12 +701,128 @@
       li.append(box, txtWrap, actions);
       list.appendChild(li);
     });
+    pendingEnterId = null;
 
     const done = items.filter(x => x.done).length;
     document.getElementById("count").textContent = items.length ? `${done}/${items.length}` : "";
     const left = items.length - done;
     document.getElementById("left").textContent =
       items.length ? `${left} left` : "";
+  }
+
+  function renderCompletedList() {
+    const al = activeList();
+    const items = al.items;
+    list.innerHTML = "";
+
+    const order = items.map((_, i) => i)
+      .filter(i => items[i].done)
+      .sort((a, b) => new Date(b && items[b].completedAt || 0) - new Date(a && items[a].completedAt || 0));
+
+    if (!order.length) {
+      list.innerHTML = '<div class="empty">No completed tasks yet.</div>';
+    }
+
+    order.forEach(i => {
+      const it = items[i];
+      const li = document.createElement("li");
+      li.className = "done";
+
+      const box = document.createElement("div");
+      box.className = "box";
+      box.title = "Mark as not done";
+      box.onclick = () => {
+        items[i].done = false;
+        items[i].completedAt = null;
+        save(); renderList();
+      };
+
+      const txtWrap = document.createElement("div");
+      txtWrap.className = "txt-wrap";
+
+      const txt = document.createElement("div");
+      txt.className = "txt";
+      txt.textContent = it.text;
+      txtWrap.appendChild(txt);
+
+      if (it.completedAt) {
+        const completed = document.createElement("div");
+        completed.className = "completed-at";
+        completed.textContent = "Completed " + formatDue(it.completedAt);
+        txtWrap.appendChild(completed);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.className = "restore-btn";
+      restoreBtn.textContent = "↩";
+      restoreBtn.title = "Restore to active list";
+      restoreBtn.onclick = () => {
+        items[i].done = false;
+        items[i].completedAt = null;
+        save(); renderList();
+      };
+
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "×";
+      del.title = "Delete permanently";
+      del.onclick = () => { items.splice(i, 1); save(); renderList(); };
+
+      actions.append(restoreBtn, del);
+      li.append(box, txtWrap, actions);
+      list.appendChild(li);
+    });
+
+    document.getElementById("count").textContent = order.length ? `${order.length} completed` : "";
+    document.getElementById("left").textContent = "";
+  }
+
+  function renderSettingsView() {
+    list.innerHTML = "";
+    document.getElementById("count").textContent = "";
+    document.getElementById("left").textContent = "";
+
+    const view = document.createElement("div");
+    view.className = "settings-view";
+
+    const row = document.createElement("div");
+    row.className = "settings-row";
+
+    const label = document.createElement("label");
+    label.htmlFor = "retentionSelect";
+    label.textContent = "Clear completed tasks";
+
+    const select = document.createElement("select");
+    select.id = "retentionSelect";
+    [
+      ["endOfDay", "At the end of each day"],
+      ["1h", "After 1 hour"],
+      ["6h", "After 6 hours"],
+      ["24h", "After 24 hours"],
+      ["never", "Never (manual only)"],
+    ].forEach(([value, text]) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      if (state.settings.retention === value) opt.selected = true;
+      select.appendChild(opt);
+    });
+    select.onchange = () => {
+      state.settings.retention = select.value;
+      save();
+      purgeExpiredCompleted();
+    };
+
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = "Completed tasks stay in the Completed tab until this runs, then they're gone for good.";
+
+    row.append(label, select, hint);
+    view.appendChild(row);
+    list.appendChild(view);
   }
 
   function toggleDueEdit(i, container) {
@@ -609,8 +923,14 @@
     e.preventDefault();
     const v = input.value.trim();
     if (!v) return;
-    activeList().items.unshift({ text: v, done: false, due: null, notified: false, pinned: false, repeat: null });
+    const newItem = {
+      _id: uid(), text: v, done: false, due: null, notified: false,
+      pinned: false, repeat: null, completedAt: null,
+    };
+    activeList().items.unshift(newItem);
+    pendingEnterId = newItem._id;
     input.value = "";
+    playPopSound();
     save(); renderList();
   };
 
@@ -619,6 +939,32 @@
     al.items = al.items.filter(x => !x.done);
     save(); renderList();
   };
+
+  const backBtn = document.getElementById("backBtn");
+  const archiveBtn = document.getElementById("archiveBtn");
+  const settingsBtn = document.getElementById("settingsBtn");
+  const viewTitle = document.getElementById("viewTitle");
+  const tabsContainer = document.getElementById("tabs");
+  const addForm = document.getElementById("form");
+  const clearBtn = document.getElementById("clear");
+
+  const VIEW_TITLES = { active: "List", completed: "Completed", settings: "Settings" };
+
+  function setViewMode(mode) {
+    viewMode = viewMode === mode ? "active" : mode;
+    backBtn.hidden = viewMode === "active";
+    archiveBtn.classList.toggle("active", viewMode === "completed");
+    settingsBtn.classList.toggle("active", viewMode === "settings");
+    viewTitle.textContent = VIEW_TITLES[viewMode];
+    addForm.hidden = viewMode !== "active";
+    clearBtn.hidden = viewMode !== "active";
+    tabsContainer.hidden = viewMode !== "active";
+    renderList();
+  }
+
+  backBtn.onclick = () => setViewMode("active");
+  archiveBtn.onclick = () => setViewMode("completed");
+  settingsBtn.onclick = () => setViewMode("settings");
 
   // Called periodically from Python (even while the window is hidden in the
   // tray) to find due tasks and hand back native-notification payloads.
@@ -641,6 +987,9 @@
     }
     return JSON.stringify(dueNow);
   };
+
+  purgeExpiredCompleted();
+  setInterval(purgeExpiredCompleted, 60 * 1000);
 
   renderTabs();
   renderList();

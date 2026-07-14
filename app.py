@@ -97,6 +97,24 @@ def on_closing():
     return False
 
 
+class TrayIcon(pystray.Icon):
+    """Left-click toggles the window directly; right-click shows a small
+    Hide/Quit menu. Plain pystray always pops the attached menu open on any
+    click, which meant a left-click never reached the window at all — you
+    had to open the menu, then click "Open List" as a second step."""
+
+    def __call__(self):
+        event = AppKit.NSApp.currentEvent()
+        if event is not None and event.type() == AppKit.NSEventTypeRightMouseUp:
+            if self._menu_handle:
+                nsmenu, _ = self._menu_handle
+                AppKit.NSMenu.popUpContextMenu_withEvent_forView_(
+                    nsmenu, event, self._status_item.button()
+                )
+        else:
+            toggle_window()
+
+
 def setup_tray():
     # pystray's macOS backend creates an NSStatusItem, which (like all AppKit
     # objects) must happen on the main thread. run_detached() hands the icon
@@ -105,12 +123,11 @@ def setup_tray():
     global tray_icon
     icon_image = Image.open(resource_path("menubar_icon.png"))
     menu = pystray.Menu(
-        pystray.MenuItem("Open List", show_window, default=True),
         pystray.MenuItem("Hide", hide_window),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", quit_app),
     )
-    tray_icon = pystray.Icon(
+    tray_icon = TrayIcon(
         APP_TITLE,
         icon_image,
         APP_TITLE,
@@ -127,6 +144,10 @@ def setup_tray():
             icon._status_item.button().image().setTemplate_(True)
         except Exception:
             pass
+        # visible = True attaches the menu to the status item, which makes
+        # AppKit pop it open on every click. Detach it — TrayIcon.__call__
+        # pops it up manually, only on right-click.
+        icon._status_item.setMenu_(None)
 
     tray_icon.run_detached(setup=_setup)
 
