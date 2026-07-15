@@ -25,6 +25,7 @@ WINDOW_WIDTH = 360
 WINDOW_HEIGHT = 540
 SCREEN_MARGIN = 12
 CHECK_INTERVAL_SECONDS = 20
+VAULT_SYNC_INTERVAL_SECONDS = 20
 
 
 def resource_path(relative):
@@ -448,6 +449,33 @@ def notification_loop():
             notify(f"Due now — {item.get('list', APP_TITLE)}", item.get("text", ""))
 
 
+def _run_vault_sync_cycle():
+    local_raw = read_backup()
+    if not local_raw:
+        return
+    try:
+        local_state = json.loads(local_raw)
+    except Exception:
+        return
+    merged = vault_sync.sync_pull_and_merge(local_state)
+    if merged is None:
+        return
+    write_backup(json.dumps(merged))
+    try:
+        window.evaluate_js(f"window.__applySyncedState({json.dumps(json.dumps(merged))})")
+    except Exception:
+        pass
+
+
+def vault_sync_loop():
+    window.events.loaded.wait(timeout=15)
+    _run_vault_sync_cycle()
+    while not stop_event.is_set():
+        if stop_event.wait(VAULT_SYNC_INTERVAL_SECONDS):
+            break
+        _run_vault_sync_cycle()
+
+
 if __name__ == "__main__":
     if already_running():
         sys.exit(0)
@@ -487,6 +515,7 @@ if __name__ == "__main__":
 
     setup_tray()
     threading.Thread(target=notification_loop, daemon=True).start()
+    threading.Thread(target=vault_sync_loop, daemon=True).start()
 
     def _reassert_accessory_policy(attempts_left=6):
         # pywebview's run loop calls activateIgnoringOtherApps_ once shortly
