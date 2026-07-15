@@ -460,7 +460,10 @@ def _run_vault_sync_cycle():
     merged = vault_sync.sync_pull_and_merge(local_state)
     if merged is None:
         return
-    write_backup(json.dumps(merged))
+    try:
+        write_backup(json.dumps(merged))
+    except Exception:
+        return
     try:
         window.evaluate_js(f"window.__applySyncedState({json.dumps(json.dumps(merged))})")
     except Exception:
