@@ -148,3 +148,76 @@ def test_render_tasks_section_no_completions_today_shows_placeholder():
     section = vault_sync.render_tasks_section(state)
     completed_block = section.split("### Completed today")[1]
     assert "Nothing yet" in completed_block
+
+
+def test_parse_tasks_section_missing_heading_returns_empty():
+    assert vault_sync.parse_tasks_section("# Title\n\n## Other\n") == {"lists": []}
+
+
+def test_parse_tasks_section_basic_roundtrip():
+    note = (
+        "# Title\n\n"
+        "## Tasks\n"
+        "### Tasks <!--id:list1-->\n"
+        "- [ ] Get haircut <!--id:abc123-->\n"
+        "- [x] Gym 📌 🔁 daily <!--id:def456-->\n"
+        "\n"
+        "### Completed today\n"
+        "- [x] Gym (Tasks) 📌 🔁 daily <!--id:def456-->\n"
+    )
+    parsed = vault_sync.parse_tasks_section(note)
+    assert len(parsed["lists"]) == 1
+    lst = parsed["lists"][0]
+    assert lst["id"] == "list1"
+    assert lst["name"] == "Tasks"
+    assert len(lst["items"]) == 2
+    haircut, gym = lst["items"]
+    assert haircut == {
+        "id": "abc123", "text": "Get haircut", "done": False,
+        "due": None, "pinned": False, "repeat": None,
+    }
+    assert gym == {
+        "id": "def456", "text": "Gym", "done": True,
+        "due": None, "pinned": True, "repeat": "daily",
+    }
+
+
+def test_parse_tasks_section_ignores_completed_today_as_a_list():
+    note = (
+        "## Tasks\n"
+        "### Tasks <!--id:list1-->\n"
+        "- [ ] a <!--id:x1-->\n"
+        "\n"
+        "### Completed today\n"
+        "- [x] something (Tasks) <!--id:x2-->\n"
+    )
+    parsed = vault_sync.parse_tasks_section(note)
+    names = [l["name"] for l in parsed["lists"]]
+    assert names == ["Tasks"]
+
+
+def test_parse_tasks_section_due_roundtrips_through_render():
+    due_iso = "2026-08-01T04:59:00.000Z"
+    state = {"lists": [{"id": "list1", "name": "Tasks", "items": [
+        {"_id": "abc123", "text": "Renew card", "done": False, "due": due_iso,
+         "notified": False, "pinned": False, "repeat": None, "completedAt": None},
+    ]}]}
+    note = "## Tasks\n" + vault_sync.render_tasks_section(state)
+    parsed = vault_sync.parse_tasks_section(note)
+    assert parsed["lists"][0]["items"][0]["due"] == due_iso
+
+
+def test_parse_tasks_section_list_with_no_id_comment():
+    note = "## Tasks\n### Hand-typed list\n- [ ] a task <!--id:x1-->\n"
+    parsed = vault_sync.parse_tasks_section(note)
+    assert parsed["lists"][0]["id"] is None
+    assert parsed["lists"][0]["name"] == "Hand-typed list"
+
+
+def test_parse_tasks_section_item_with_no_id_comment_is_skipped():
+    # A line typed by hand with no id comment doesn't match _ITEM_LINE_RE
+    # (which requires the id comment) — it's surfaced separately by the
+    # merge step (Task 6) as a brand-new item, not here.
+    note = "## Tasks\n### Tasks <!--id:list1-->\n- [ ] hand typed, no id yet\n"
+    parsed = vault_sync.parse_tasks_section(note)
+    assert parsed["lists"][0]["items"] == []

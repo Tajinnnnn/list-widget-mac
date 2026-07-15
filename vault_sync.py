@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -110,3 +111,70 @@ def render_tasks_section(state: dict) -> str:
         lines.append("*Nothing yet.*")
 
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+_ITEM_LINE_RE = re.compile(r"^- \[([ xX])\]\s+(?P<rest>.+?)\s*<!--id:(?P<id>[A-Za-z0-9]+)-->\s*$")
+_LIST_HEADING_RE = re.compile(r"^### (?P<name>.+?)(?:\s*<!--id:(?P<id>[A-Za-z0-9]+)-->)?\s*$")
+_PINNED_RE = re.compile(r"\s*📌\s*")
+_DUE_RE = re.compile(r"\s*📅\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*")
+_REPEAT_RE = re.compile(r"\s*🔁\s*(daily|weekly|monthly)\s*")
+
+
+def _parse_item_line(line: str) -> dict | None:
+    match = _ITEM_LINE_RE.match(line.strip())
+    if not match:
+        return None
+    rest = match.group("rest")
+
+    pinned = bool(_PINNED_RE.search(rest))
+    rest = _PINNED_RE.sub(" ", rest)
+
+    due = None
+    due_match = _DUE_RE.search(rest)
+    if due_match:
+        due = _display_to_due(due_match.group(1))
+        rest = _DUE_RE.sub(" ", rest)
+
+    repeat = None
+    repeat_match = _REPEAT_RE.search(rest)
+    if repeat_match:
+        repeat = repeat_match.group(1)
+        rest = _REPEAT_RE.sub(" ", rest)
+
+    text = " ".join(rest.split()).strip()
+
+    return {
+        "id": match.group("id"),
+        "text": text,
+        "done": match.group(1).lower() == "x",
+        "due": due,
+        "pinned": pinned,
+        "repeat": repeat,
+    }
+
+
+def parse_tasks_section(note_text: str) -> dict:
+    section = _extract_section(note_text, "## Tasks")
+    if section is None:
+        return {"lists": []}
+
+    lists: list[dict] = []
+    current: dict | None = None
+
+    for line in section.split("\n"):
+        heading_match = _LIST_HEADING_RE.match(line.strip())
+        if heading_match:
+            name = heading_match.group("name").strip()
+            if name == "Completed today":
+                current = None
+                continue
+            current = {"id": heading_match.group("id"), "name": name, "items": []}
+            lists.append(current)
+            continue
+        if current is None:
+            continue
+        item = _parse_item_line(line)
+        if item is not None:
+            current["items"].append(item)
+
+    return {"lists": lists}
