@@ -25,8 +25,12 @@ sounds, etc.) aren't automatically in that repo.
 
 ## Features
 
-- Tabs for multiple lists, pinning, due dates/repeats with a native
-  calendar picker, native macOS notifications for due tasks.
+- Tabs for multiple lists, pinning, due dates/repeats (with explicit
+  hour/minute/AM-PM fields, since the native time input silently follows
+  the system's 24-hour-vs-12-hour locale setting) and a native calendar
+  picker, native macOS notifications for due tasks.
+- Drag tasks by the ⣿ handle (visible on hover) to manually reorder them
+  within a list.
 - Right-click a tab to rename it or set a color (preset swatches or a
   native color-wheel picker via a hidden `<input type="color">`).
 - Adding a task plays a soft "bubble pop" sound and slides the row in;
