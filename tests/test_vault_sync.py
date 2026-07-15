@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import vault_sync
@@ -63,3 +63,88 @@ def test_upsert_section_preserves_content_before_heading():
     text = "# Title\n\n## Intent\nuntouched\n\n## Tasks\nold\n"
     result = vault_sync._upsert_section(text, "## Tasks", "new")
     assert "## Intent\nuntouched" in result
+
+
+def _item(**overrides):
+    base = {
+        "_id": "abc123",
+        "text": "Get haircut",
+        "done": False,
+        "due": None,
+        "notified": False,
+        "pinned": False,
+        "repeat": None,
+        "completedAt": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_due_display_roundtrip():
+    original = "2026-08-01T04:59:00.000Z"
+    display = vault_sync._due_to_display(original)
+    assert vault_sync._display_to_due(display) == original
+
+
+def test_format_item_line_plain():
+    line = vault_sync._format_item_line(_item())
+    assert line == "- [ ] Get haircut <!--id:abc123-->"
+
+
+def test_format_item_line_done():
+    line = vault_sync._format_item_line(_item(done=True))
+    assert line.startswith("- [x] Get haircut")
+
+
+def test_format_item_line_pinned_and_repeat():
+    line = vault_sync._format_item_line(_item(text="Gym", pinned=True, repeat="daily"))
+    assert line == "- [ ] Gym 📌 🔁 daily <!--id:abc123-->"
+
+
+def test_format_item_line_with_due_contains_marker():
+    line = vault_sync._format_item_line(_item(due="2026-08-01T04:59:00.000Z"))
+    assert "📅 " in line
+    assert line.endswith("<!--id:abc123-->")
+
+
+def test_format_item_line_with_source_list():
+    line = vault_sync._format_item_line(_item(), source_list_name="Tasks")
+    assert line == "- [ ] Get haircut (Tasks) <!--id:abc123-->"
+
+
+def test_render_tasks_section_groups_by_list():
+    state = {
+        "lists": [
+            {"id": "list1", "name": "Tasks", "items": [_item()]},
+            {"id": "list2", "name": "Build4fun", "items": [_item(_id="def456", text="Ship it")]},
+        ]
+    }
+    section = vault_sync.render_tasks_section(state)
+    assert "### Tasks <!--id:list1-->" in section
+    assert "### Build4fun <!--id:list2-->" in section
+    assert "- [ ] Get haircut <!--id:abc123-->" in section
+    assert "- [ ] Ship it <!--id:def456-->" in section
+    assert "### Completed today" in section
+
+
+def test_render_tasks_section_completed_today_rollup():
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    state = {
+        "lists": [
+            {
+                "id": "list1",
+                "name": "Tasks",
+                "items": [_item(text="Done today", done=True, completedAt=now_iso)],
+            }
+        ]
+    }
+    section = vault_sync.render_tasks_section(state)
+    completed_block = section.split("### Completed today")[1]
+    assert "Done today (Tasks)" in completed_block
+
+
+def test_render_tasks_section_no_completions_today_shows_placeholder():
+    state = {"lists": [{"id": "list1", "name": "Tasks", "items": [_item()]}]}
+    section = vault_sync.render_tasks_section(state)
+    completed_block = section.split("### Completed today")[1]
+    assert "Nothing yet" in completed_block
