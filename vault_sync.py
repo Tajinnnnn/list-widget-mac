@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -178,3 +179,15 @@ def parse_tasks_section(note_text: str) -> dict:
             current["items"].append(item)
 
     return {"lists": lists}
+
+
+def write_tasks_section(vault_root: Path, state: dict) -> None:
+    path = today_note_path(vault_root)
+    ensure_note_exists(vault_root, path)
+    text = path.read_text()
+    new_text = _upsert_section(text, "## Tasks", render_tasks_section(state))
+    if new_text == text:
+        return
+    tmp_path = path.with_suffix(".md.tmp")
+    tmp_path.write_text(new_text)
+    os.replace(tmp_path, path)

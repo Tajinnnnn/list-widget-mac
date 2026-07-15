@@ -221,3 +221,37 @@ def test_parse_tasks_section_item_with_no_id_comment_is_skipped():
     note = "## Tasks\n### Tasks <!--id:list1-->\n- [ ] hand typed, no id yet\n"
     parsed = vault_sync.parse_tasks_section(note)
     assert parsed["lists"][0]["items"] == []
+
+
+def test_write_tasks_section_creates_note_and_writes_body(tmp_path):
+    state = {"lists": [{"id": "list1", "name": "Tasks", "items": [_item()]}]}
+    vault_sync.write_tasks_section(tmp_path, state)
+
+    path = vault_sync.today_note_path(tmp_path)
+    assert path.exists()
+    content = path.read_text()
+    assert "## Tasks" in content
+    assert "- [ ] Get haircut <!--id:abc123-->" in content
+
+
+def test_write_tasks_section_is_idempotent_noop(tmp_path):
+    state = {"lists": [{"id": "list1", "name": "Tasks", "items": [_item()]}]}
+    vault_sync.write_tasks_section(tmp_path, state)
+    path = vault_sync.today_note_path(tmp_path)
+    first_mtime = path.stat().st_mtime_ns
+
+    vault_sync.write_tasks_section(tmp_path, state)
+    assert path.stat().st_mtime_ns == first_mtime
+
+
+def test_write_tasks_section_preserves_rest_of_note(tmp_path):
+    journals = tmp_path / "01 Journals"
+    journals.mkdir()
+    (journals / "_daily-template.md").write_text(
+        "# {{date}}\n\n## Intent\nmy own words\n"
+    )
+    state = {"lists": [{"id": "list1", "name": "Tasks", "items": [_item()]}]}
+    vault_sync.write_tasks_section(tmp_path, state)
+
+    content = vault_sync.today_note_path(tmp_path).read_text()
+    assert "## Intent\nmy own words" in content
