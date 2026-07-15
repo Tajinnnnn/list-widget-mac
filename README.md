@@ -22,6 +22,12 @@ sounds, etc.) aren't automatically in that repo.
   drawing.
 - `list.spec` — PyInstaller build spec that bundles everything into
   `List.app`, with `LSUIElement` set so it never shows a Dock icon.
+- `vault_sync.py` — two-way sync between the widget's tasks and today's
+  Obsidian daily note (`## Tasks` section only). Widget saves push
+  instantly; a background poll (and a check on launch) pulls in edits made
+  in the note, merged item-by-item with last-write-wins. See
+  `docs/superpowers/specs/2026-07-15-vault-sync-design.md` for the full
+  design.
 
 ## Features
 
