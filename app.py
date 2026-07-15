@@ -26,8 +26,20 @@ CHECK_INTERVAL_SECONDS = 20
 
 
 def resource_path(relative):
+    # In the packaged .app, sys._MEIPASS can point through
+    # Contents/Frameworks, where bundled data files are actually just
+    # symlinks into Contents/Resources (that's how PyInstaller's macOS
+    # BUNDLE step satisfies the bundle-structure convention). Resolving
+    # only the base directory doesn't collapse that — todo.html itself is
+    # the symlink, so the joined path still ends in a symlink hop unless
+    # the whole thing is resolved together. Loading todo.html through that
+    # symlinked path made WKWebView's navigation fail silently (no error,
+    # no didFinishNavigation, no JS ever ran) — confirmed by testing
+    # against Contents/Resources/todo.html (the real file) directly, which
+    # loaded fine. realpath() on the full joined path sidesteps whichever
+    # exact WebKit mechanism is responsible.
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, relative)
+    return os.path.realpath(os.path.join(base, relative))
 
 
 _lock_fd = None

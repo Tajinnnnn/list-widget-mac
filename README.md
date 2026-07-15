@@ -169,6 +169,28 @@ persistence is doing — at
 backup has strictly more tasks than what localStorage just produced,
 the app recovers from the backup instead (`recoverFromBackupIfNewer()`).
 
+**`resource_path()` resolves through `os.path.realpath()`, not just
+`sys._MEIPASS` joined with the filename.** In the packaged `.app`,
+`Contents/Frameworks/todo.html` is actually a symlink to
+`../Resources/todo.html` (PyInstaller's macOS `BUNDLE` step sets this up
+to satisfy the bundle-structure convention), and `_MEIPASS` points at
+`Frameworks`. Loading `todo.html` through that symlinked path made
+WKWebView's navigation fail *silently* — no error, no
+`didFinishNavigation`, no JS ever ran, so nothing looked wrong until you
+noticed the window was blank or (worse) that saves/recovery just never
+happened. `os.path.realpath()` on the full joined path collapses this to
+the real file every time, independent of whichever bundle subdirectory
+`_MEIPASS` happens to point at.
+
+**If you ever do a manual reinstall via `cp -R dist/List.app
+/Applications/List.app`, remove the old one first.** `cp -R` copies
+*into* an existing destination directory rather than replacing it, so
+running that command against an already-installed `List.app` silently
+produces a nested `/Applications/List.app/List.app/` and leaves the
+real, top-level `Contents/` untouched — every rebuild after that point
+is installed and then never actually run. Safe pattern:
+`rm -rf /Applications/List.app && cp -R dist/List.app /Applications/List.app`.
+
 ## Uninstall
 
 ```bash
