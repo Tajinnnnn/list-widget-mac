@@ -1,6 +1,10 @@
+import copy
 import os
+import random
 import re
-from datetime import date, datetime, timezone
+import string
+import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 VAULT_ROOT = Path("/Users/tajin/Documents/Coding/Obsidian/Tajin Brain")
@@ -191,3 +195,118 @@ def write_tasks_section(vault_root: Path, state: dict) -> None:
     tmp_path = path.with_suffix(".md.tmp")
     tmp_path.write_text(new_text)
     os.replace(tmp_path, path)
+
+
+def _gen_id() -> str:
+    ts = format(int(time.time() * 1000), "x")
+    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    return f"{ts}{suffix}"
+
+
+def _mtime_to_iso(mtime: float) -> str:
+    dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
+def _render_key(d: dict) -> tuple:
+    return (d.get("text", ""), bool(d.get("done")), d.get("due"), bool(d.get("pinned")), d.get("repeat"))
+
+
+def _remote_to_item(r_item: dict, item_id: str, updated_at: str) -> dict:
+    return {
+        "_id": item_id,
+        "text": r_item.get("text", ""),
+        "done": bool(r_item.get("done")),
+        "due": r_item.get("due"),
+        "notified": False,
+        "pinned": bool(r_item.get("pinned")),
+        "repeat": r_item.get("repeat"),
+        "completedAt": updated_at if r_item.get("done") else None,
+        "updatedAt": updated_at,
+    }
+
+
+def _apply_remote_to_item(local_item: dict, r_item: dict, updated_at: str) -> None:
+    was_done = local_item.get("done")
+    local_item["text"] = r_item.get("text", "")
+    local_item["done"] = bool(r_item.get("done"))
+    local_item["due"] = r_item.get("due")
+    local_item["pinned"] = bool(r_item.get("pinned"))
+    local_item["repeat"] = r_item.get("repeat")
+    local_item["updatedAt"] = updated_at
+    if local_item["done"] and not was_done:
+        local_item["completedAt"] = updated_at
+    elif not local_item["done"]:
+        local_item["completedAt"] = None
+
+
+def purge_old_tombstones(tombstones: list[dict], now: datetime | None = None) -> list[dict]:
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=3)
+    kept = []
+    for t in tombstones:
+        updated = datetime.fromisoformat(t["updatedAt"].replace("Z", "+00:00"))
+        if updated >= cutoff:
+            kept.append(t)
+    return kept
+
+
+def merge(local: dict, remote: dict, note_mtime: str) -> dict:
+    result = copy.deepcopy(local)
+    result.setdefault("tombstones", [])
+    tombstones_by_id = {t["_id"]: t for t in result["tombstones"]}
+
+    local_lists_by_id = {}
+    local_items_by_id = {}
+    for lst in result.get("lists", []):
+        local_lists_by_id[lst["id"]] = lst
+        for item in lst.get("items", []):
+            local_items_by_id[item["_id"]] = (lst, item)
+
+    seen_remote_item_ids = set()
+
+    for r_list in remote.get("lists", []):
+        list_id = r_list.get("id") or _gen_id()
+        target_list = local_lists_by_id.get(list_id)
+        if target_list is None:
+            target_list = {"id": list_id, "name": r_list["name"], "color": None, "items": []}
+            result["lists"].append(target_list)
+            local_lists_by_id[list_id] = target_list
+        else:
+            target_list["name"] = r_list["name"]
+
+        for r_item in r_list.get("items", []):
+            item_id = r_item.get("id") or _gen_id()
+            seen_remote_item_ids.add(item_id)
+            existing = local_items_by_id.get(item_id)
+            tombstone = tombstones_by_id.get(item_id)
+
+            if existing is None and tombstone is None:
+                new_item = _remote_to_item(r_item, item_id, note_mtime)
+                target_list["items"].append(new_item)
+                local_items_by_id[item_id] = (target_list, new_item)
+                continue
+
+            if existing is not None:
+                _, local_item = existing
+                if _render_key(local_item) == _render_key(r_item):
+                    continue
+                if note_mtime > local_item.get("updatedAt", ""):
+                    _apply_remote_to_item(local_item, r_item, note_mtime)
+                continue
+
+            if note_mtime > tombstone.get("updatedAt", ""):
+                new_item = _remote_to_item(r_item, item_id, note_mtime)
+                target_list["items"].append(new_item)
+                local_items_by_id[item_id] = (target_list, new_item)
+                del tombstones_by_id[item_id]
+
+    for item_id, (lst, item) in list(local_items_by_id.items()):
+        if item_id in seen_remote_item_ids:
+            continue
+        if note_mtime > item.get("updatedAt", ""):
+            lst["items"] = [it for it in lst["items"] if it["_id"] != item_id]
+            tombstones_by_id[item_id] = {"_id": item_id, "updatedAt": note_mtime}
+
+    result["tombstones"] = purge_old_tombstones(list(tombstones_by_id.values()))
+    return result

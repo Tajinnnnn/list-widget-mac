@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -255,3 +256,164 @@ def test_write_tasks_section_preserves_rest_of_note(tmp_path):
 
     content = vault_sync.today_note_path(tmp_path).read_text()
     assert "## Intent\nmy own words" in content
+
+
+import copy
+
+
+def _local_state(**list_overrides):
+    lst = {
+        "id": "list1", "name": "Tasks", "color": None,
+        "items": [
+            {"_id": "a1", "text": "Existing task", "done": False, "due": None,
+             "notified": False, "pinned": False, "repeat": None, "completedAt": None,
+             "updatedAt": "2026-07-14T10:00:00.000Z"},
+        ],
+    }
+    lst.update(list_overrides)
+    return {"lists": [lst], "active": "list1", "settings": {}, "tombstones": []}
+
+
+def _remote_list(items):
+    return {"lists": [{"id": "list1", "name": "Tasks", "items": items}]}
+
+
+def test_merge_no_changes_returns_equivalent_state():
+    local = _local_state()
+    remote = {"lists": [{"id": "list1", "name": "Tasks", "items": [
+        {"id": "a1", "text": "Existing task", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ]}]}
+    merged = vault_sync.merge(local, remote, "2026-07-14T09:00:00.000Z")
+    assert merged["lists"][0]["items"][0]["text"] == "Existing task"
+    assert merged["lists"][0]["items"][0]["updatedAt"] == "2026-07-14T10:00:00.000Z"
+
+
+def test_merge_remote_edit_newer_than_local_wins():
+    local = _local_state()
+    remote = _remote_list([
+        {"id": "a1", "text": "Edited in Obsidian", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    item = merged["lists"][0]["items"][0]
+    assert item["text"] == "Edited in Obsidian"
+    assert item["updatedAt"] == "2026-07-15T09:00:00.000Z"
+
+
+def test_merge_local_edit_newer_than_remote_wins():
+    local = _local_state()
+    local["lists"][0]["items"][0]["updatedAt"] = "2026-07-16T09:00:00.000Z"
+    remote = _remote_list([
+        {"id": "a1", "text": "Stale note edit", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    item = merged["lists"][0]["items"][0]
+    assert item["text"] == "Existing task"
+
+
+def test_merge_new_item_added_in_note():
+    local = _local_state()
+    remote = _remote_list([
+        {"id": "a1", "text": "Existing task", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+        {"id": "b2", "text": "Added in Obsidian", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    ids = {it["_id"] for it in merged["lists"][0]["items"]}
+    assert ids == {"a1", "b2"}
+    new_item = next(it for it in merged["lists"][0]["items"] if it["_id"] == "b2")
+    assert new_item["updatedAt"] == "2026-07-15T09:00:00.000Z"
+
+
+def test_merge_item_added_in_note_without_id_gets_minted_id():
+    local = _local_state()
+    remote = _remote_list([
+        {"id": "a1", "text": "Existing task", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+        {"id": None, "text": "Hand typed", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    assert len(merged["lists"][0]["items"]) == 2
+    hand_typed = next(it for it in merged["lists"][0]["items"] if it["text"] == "Hand typed")
+    assert hand_typed["_id"]
+
+
+def test_merge_item_deleted_in_note_becomes_tombstone():
+    local = _local_state()
+    remote = _remote_list([])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    assert merged["lists"][0]["items"] == []
+    assert merged["tombstones"] == [{"_id": "a1", "updatedAt": "2026-07-15T09:00:00.000Z"}]
+
+
+def test_merge_deletion_older_than_local_edit_does_not_stick():
+    local = _local_state()
+    local["lists"][0]["items"][0]["updatedAt"] = "2026-07-16T09:00:00.000Z"
+    remote = _remote_list([])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    assert len(merged["lists"][0]["items"]) == 1
+    assert merged["tombstones"] == []
+
+
+def test_merge_resurrects_item_edited_after_tombstone():
+    local = _local_state()
+    local["lists"][0]["items"] = []
+    local["tombstones"] = [{"_id": "a1", "updatedAt": "2026-07-14T09:00:00.000Z"}]
+    remote = _remote_list([
+        {"id": "a1", "text": "Back again", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    assert len(merged["lists"][0]["items"]) == 1
+    assert merged["lists"][0]["items"][0]["text"] == "Back again"
+    assert merged["tombstones"] == []
+
+
+def test_merge_tombstone_newer_than_note_edit_stays_deleted():
+    local = _local_state()
+    local["lists"][0]["items"] = []
+    local["tombstones"] = [{"_id": "a1", "updatedAt": "2026-07-16T09:00:00.000Z"}]
+    remote = _remote_list([
+        {"id": "a1", "text": "Stale leftover line", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ])
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    assert merged["lists"][0]["items"] == []
+    assert merged["tombstones"] == [{"_id": "a1", "updatedAt": "2026-07-16T09:00:00.000Z"}]
+
+
+def test_merge_new_list_from_note_gets_added():
+    local = _local_state()
+    remote = {"lists": [
+        {"id": "list1", "name": "Tasks", "items": [
+            {"id": "a1", "text": "Existing task", "done": False, "due": None,
+             "pinned": False, "repeat": None},
+        ]},
+        {"id": None, "name": "New From Note", "items": [
+            {"id": None, "text": "Fresh", "done": False, "due": None,
+             "pinned": False, "repeat": None},
+        ]},
+    ]}
+    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    names = {l["name"] for l in merged["lists"]}
+    assert names == {"Tasks", "New From Note"}
+
+
+def test_purge_old_tombstones_drops_entries_older_than_3_days():
+    from datetime import timedelta
+    now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    tombstones = [
+        {"_id": "old", "updatedAt": (now - timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%S.000Z")},
+        {"_id": "recent", "updatedAt": (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")},
+    ]
+    kept = vault_sync.purge_old_tombstones(tombstones, now=now)
+    assert [t["_id"] for t in kept] == ["recent"]
+
+
+def test_mtime_to_iso_format_matches_js_toisostring():
+    iso = vault_sync._mtime_to_iso(1752566400.123)
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", iso)
