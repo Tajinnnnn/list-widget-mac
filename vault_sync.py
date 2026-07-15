@@ -252,6 +252,19 @@ def purge_old_tombstones(tombstones: list[dict], now: datetime | None = None) ->
 
 
 def merge(local: dict, remote: dict, note_mtime: str) -> dict:
+    """Merge local widget state with parsed remote state from today's note.
+
+    Uses last-write-wins (LWW) semantics: local is the source of truth for items
+    it already knows about. Remote changes are applied only if note_mtime (the
+    note file's modification time) is newer than the item's updatedAt timestamp.
+
+    Since individual note-typed edits carry no per-item timestamp, note_mtime
+    serves as the effective "when did this change" timestamp for all items in
+    the remote snapshot.
+
+    Maintains tombstones for deleted items to prevent re-creating recently-deleted
+    items if they reappear in the note before the tombstone expires (3 days).
+    """
     result = copy.deepcopy(local)
     result.setdefault("tombstones", [])
     tombstones_by_id = {t["_id"]: t for t in result["tombstones"]}
@@ -281,12 +294,14 @@ def merge(local: dict, remote: dict, note_mtime: str) -> dict:
             existing = local_items_by_id.get(item_id)
             tombstone = tombstones_by_id.get(item_id)
 
+            # New item: no prior local record and not tombstoned. Add it to local state.
             if existing is None and tombstone is None:
                 new_item = _remote_to_item(r_item, item_id, note_mtime)
                 target_list["items"].append(new_item)
                 local_items_by_id[item_id] = (target_list, new_item)
                 continue
 
+            # Existing item: remote wins only if note_mtime is newer than local updatedAt.
             if existing is not None:
                 _, local_item = existing
                 if _render_key(local_item) == _render_key(r_item):
@@ -295,12 +310,16 @@ def merge(local: dict, remote: dict, note_mtime: str) -> dict:
                     _apply_remote_to_item(local_item, r_item, note_mtime)
                 continue
 
+            # Tombstoned item: resurrect only if note_mtime is newer than the tombstone.
             if note_mtime > tombstone.get("updatedAt", ""):
                 new_item = _remote_to_item(r_item, item_id, note_mtime)
                 target_list["items"].append(new_item)
                 local_items_by_id[item_id] = (target_list, new_item)
                 del tombstones_by_id[item_id]
 
+    # Items missing from remote: tombstone them if note_mtime is newer than their updatedAt.
+    # This handles items deleted in the note; gated by timestamp to prevent re-deletion
+    # if they were modified locally after the note was last written.
     for item_id, (lst, item) in list(local_items_by_id.items()):
         if item_id in seen_remote_item_ids:
             continue
