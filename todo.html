@@ -654,7 +654,6 @@
   ];
 
   let state = load();
-  let lastItemFields = snapshotItemFields(state);
 
   const TRACKED_ITEM_FIELDS = ["text", "done", "due", "pinned", "repeat"];
 
@@ -673,6 +672,8 @@
   function fieldsEqual(a, b) {
     return TRACKED_ITEM_FIELDS.every(k => a[k] === b[k]);
   }
+
+  let lastItemFields = snapshotItemFields(state);
 
   function stampUpdatedAtAndTombstones() {
     const now = new Date().toISOString();
