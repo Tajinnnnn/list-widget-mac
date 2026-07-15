@@ -131,6 +131,20 @@ startup, before the window loads) clears just the cache data types —
 `WKWebsiteDataTypeDiskCache` / `WKWebsiteDataTypeMemoryCache` — leaving
 local storage alone.
 
+`quit_app()` also waits ~0.4s before tearing down the window. WKWebView's
+actual localStorage persistence happens asynchronously in WebKit's
+separate networking/storage process, not synchronously the instant
+`localStorage.setItem()` returns in JS — destroying the window right
+after a task was just added/edited risked losing that write. This
+runs on the main thread (tray/menu callbacks are dispatched there), so
+it can't call back into the WebView to force/await a flush —
+`evaluate_js()` blocks on that same main run loop and would deadlock. A
+plain `time.sleep()` is safe regardless, since the actual write happens
+in that other process independent of whether our run loop is spinning.
+SIGTERM (sent on logout/shutdown, unlike Cmd+Q or the tray Quit item)
+gets the same treatment via a signal handler that defers back onto the
+run loop rather than doing the flush-and-sleep inline.
+
 ## Uninstall
 
 ```bash

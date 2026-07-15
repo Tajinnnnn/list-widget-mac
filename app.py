@@ -1,9 +1,11 @@
 import fcntl
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import AppKit
@@ -111,9 +113,23 @@ def toggle_window(icon=None, item=None):
         show_window()
 
 
-def quit_app(icon, item):
+def quit_app(icon=None, item=None):
     stop_event.set()
-    icon.stop()
+    # WKWebView's localStorage writes aren't guaranteed to have hit disk
+    # the instant localStorage.setItem() returns in JS — the actual
+    # persistence happens in WebKit's separate networking/storage
+    # process, asynchronously. Destroying the window immediately after
+    # a task was just added/edited risked tearing down before that
+    # flush landed. This runs on the main thread (tray menu callbacks
+    # are dispatched there), so don't call back into the WebView here —
+    # evaluate_js() blocks on the same main run loop we're currently
+    # occupying and would deadlock. A plain sleep is safe: the actual
+    # flush happens in that other process regardless of whether our
+    # run loop is spinning.
+    if window is not None:
+        time.sleep(0.4)
+    if icon is not None:
+        icon.stop()
     if window is not None:
         window.destroy()
 
@@ -121,6 +137,18 @@ def quit_app(icon, item):
 def on_closing():
     hide_window()
     return False
+
+
+def _handle_sigterm(signum, frame):
+    # Sent on logout/shutdown/`kill` (not on Cmd+Q or the tray Quit item,
+    # which go through quit_app already) — apply the same flush-before-
+    # teardown treatment so a system restart can't silently lose data.
+    # Signal handlers interrupt whatever the main thread was doing, so
+    # don't do real work here — defer it back onto the normal run loop.
+    AppHelper.callAfter(quit_app, tray_icon, None)
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 def _window_bg_color():
