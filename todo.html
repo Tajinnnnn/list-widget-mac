@@ -656,19 +656,22 @@
   let state = load();
   let lastItemFields = snapshotItemFields(state);
 
+  const TRACKED_ITEM_FIELDS = ["text", "done", "due", "pinned", "repeat"];
+
   function snapshotItemFields(s) {
     const map = new Map();
     (s.lists || []).forEach(l => {
       (l.items || []).forEach(it => {
-        map.set(it._id, { text: it.text, done: it.done, due: it.due, pinned: it.pinned, repeat: it.repeat });
+        const fields = {};
+        TRACKED_ITEM_FIELDS.forEach(k => { fields[k] = it[k]; });
+        map.set(it._id, fields);
       });
     });
     return map;
   }
 
   function fieldsEqual(a, b) {
-    return a.text === b.text && a.done === b.done && a.due === b.due
-      && a.pinned === b.pinned && a.repeat === b.repeat;
+    return TRACKED_ITEM_FIELDS.every(k => a[k] === b[k]);
   }
 
   function stampUpdatedAtAndTombstones() {
@@ -678,7 +681,8 @@
       l.items.forEach(it => {
         currentIds.add(it._id);
         const prev = lastItemFields.get(it._id);
-        const cur = { text: it.text, done: it.done, due: it.due, pinned: it.pinned, repeat: it.repeat };
+        const cur = {};
+        TRACKED_ITEM_FIELDS.forEach(k => { cur[k] = it[k]; });
         if (!prev || !fieldsEqual(prev, cur)) {
           it.updatedAt = now;
         }
