@@ -17,6 +17,7 @@ from PyObjCTools import AppHelper
 
 APP_TITLE = "List"
 LOCK_PATH = Path.home() / "Library" / "Application Support" / "List" / ".list.lock"
+BACKUP_PATH = Path.home() / "Library" / "Application Support" / "List" / "backup.json"
 
 WINDOW_WIDTH = 360
 WINDOW_HEIGHT = 540
@@ -41,6 +42,33 @@ def already_running():
         return False
     except OSError:
         return True
+
+
+def write_backup(data):
+    # A Python-owned fallback, independent of WKWebView's localStorage
+    # entirely — written with an explicit flush + fsync so it's actually
+    # durable on disk the moment this returns, unlike localStorage's
+    # opaque, asynchronous persistence (see quit_app). Write to a temp
+    # file and atomically rename over the real one so a mid-write kill
+    # can never leave behind a corrupt/partial backup — worst case, the
+    # previous good backup just doesn't get updated this time.
+    try:
+        BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = BACKUP_PATH.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, BACKUP_PATH)
+    except Exception:
+        pass
+
+
+def read_backup():
+    try:
+        return BACKUP_PATH.read_text()
+    except Exception:
+        return ""
 
 
 def clear_webkit_cache():
@@ -238,12 +266,21 @@ def apply_vibrancy(enabled):
     # reaching into the same private bits pywebview itself would use: the
     # actual WKWebView (via BrowserView.instances, keyed by window uid) and
     # an NSVisualEffectView inserted behind it.
-    def _apply():
+    def _apply(_retries_left=15):
         try:
             from webview.platforms.cocoa import BrowserView
 
             browser_view = BrowserView.instances.get("master")
             if browser_view is None:
+                # Under file:// loading (see the html_path fix in __main__),
+                # window.pywebview.api can go truthy on the JS side before
+                # BrowserView.instances["master"] is registered on this side
+                # — the old HTTP-server loading path happened to be slow
+                # enough that this never raced. Retry instead of silently
+                # dropping the call, so startup reapply doesn't depend on
+                # winning that race.
+                if _retries_left > 0:
+                    AppHelper.callLater(0.2, _apply, _retries_left - 1)
                 return
             webview_native = browser_view.webview
             ns_window = browser_view.window
@@ -303,6 +340,13 @@ class JsApi:
     def set_vibrancy(self, enabled):
         apply_vibrancy(bool(enabled))
         return True
+
+    def save_backup(self, data):
+        write_backup(data)
+        return True
+
+    def load_backup(self):
+        return read_backup()
 
 
 class TrayIcon(pystray.Icon):
@@ -392,7 +436,17 @@ if __name__ == "__main__":
 
     clear_webkit_cache()
 
-    html_path = resource_path("todo.html")
+    # A plain filesystem path makes pywebview's is_local_url() think this
+    # needs its local HTTP server (bottle, on a fixed-but-not-guaranteed-
+    # free port). If that port is ever taken (another process, or a
+    # lingering socket from an abrupt previous exit — this really
+    # happened during testing), the page loads under a *different*
+    # origin than usual, and WKWebView's localStorage is origin-scoped:
+    # a different origin means a completely different, empty storage
+    # bucket, which looked exactly like randomly losing saved tasks.
+    # An explicit file:// URL sidesteps the HTTP server (and that whole
+    # failure mode) entirely, and is stable across every launch.
+    html_path = "file://" + resource_path("todo.html")
     window = webview.create_window(
         APP_TITLE,
         html_path,

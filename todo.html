@@ -815,7 +815,44 @@
     return result;
   }
 
-  function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+  function save() {
+    const json = JSON.stringify(state);
+    localStorage.setItem(KEY, json);
+    // Belt-and-suspenders backup: written to a plain file with an
+    // explicit fsync on the Python side, independent of whatever
+    // WebKit's own (opaque, asynchronous) localStorage persistence is
+    // doing. Fire-and-forget — don't block saves on it.
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.save_backup) {
+      window.pywebview.api.save_backup(json).catch(() => {});
+    }
+  }
+
+  function countAllItems(s) {
+    return (s.lists || []).reduce((sum, l) => sum + (l.items || []).length, 0);
+  }
+
+  // If the Python-side backup has strictly more tasks than what we just
+  // loaded from localStorage, localStorage lost data relative to the
+  // last known-good backup — recover from the backup instead.
+  function recoverFromBackupIfNewer() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.load_backup) return;
+    window.pywebview.api.load_backup().then(raw => {
+      if (!raw) return;
+      let backup;
+      try { backup = JSON.parse(raw); } catch { return; }
+      if (!backup || !Array.isArray(backup.lists)) return;
+      if (countAllItems(backup) > countAllItems(state)) {
+        state = backup;
+        state.lists.forEach(l => {
+          normalizeItems(l.items);
+          if (l.color === undefined) l.color = null;
+        });
+        save();
+        renderTabs();
+        renderList();
+      }
+    }).catch(() => {});
+  }
 
   function activeList() {
     return state.lists.find(l => l.id === state.active) || state.lists[0];
@@ -1922,6 +1959,17 @@
       applyVibrancy(true);
     } else {
       setTimeout(ensureVibrancyApplied, 200);
+    }
+  })();
+
+  // Same "poll until the bridge exists" approach as vibrancy above —
+  // check the Python-side backup once the API is ready, and recover
+  // from it if it turns out to have more tasks than localStorage did.
+  (function checkBackupWhenReady() {
+    if (window.pywebview && window.pywebview.api) {
+      recoverFromBackupIfNewer();
+    } else {
+      setTimeout(checkBackupWhenReady, 200);
     }
   })();
 </script>

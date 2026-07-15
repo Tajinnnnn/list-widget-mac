@@ -145,6 +145,30 @@ SIGTERM (sent on logout/shutdown, unlike Cmd+Q or the tray Quit item)
 gets the same treatment via a signal handler that defers back onto the
 run loop rather than doing the flush-and-sleep inline.
 
+**A second, independent bug caused the same symptom (tasks silently
+missing after quit/restart) and took much longer to find**: pywebview's
+`is_local_url()` treats a plain filesystem path as needing its bundled
+local HTTP server (`bottle`, on a fixed port, `DEFAULT_HTTP_PORT`). If
+that port was ever unavailable — another process, or a lingering socket
+from a prior abrupt exit, both observed during testing — the page loads
+under a *different* origin than usual. WKWebView's localStorage is
+origin-scoped, so a different origin means a different, usually-empty
+storage bucket: tasks weren't corrupted or wiped, they were sitting in
+an orphaned origin folder under
+`~/Library/WebKit/club.build4fun.listwidget/WebsiteData/Default/` the
+app just wasn't looking at anymore. `app.py` now loads `todo.html` via
+an explicit `file://` URL (`html_path = "file://" + resource_path(...)`),
+which makes `is_local_url()` return `False` and bypasses the HTTP server
+(and this whole failure mode) entirely.
+
+As defense-in-depth on top of that, `todo.html`'s `save()` also writes a
+plain-file backup via `JsApi.save_backup()` — flushed and `fsync()`'d on
+the Python side, independent of whatever WebKit's own localStorage
+persistence is doing — at
+`~/Library/Application Support/List/backup.json`. On load, if that
+backup has strictly more tasks than what localStorage just produced,
+the app recovers from the backup instead (`recoverFromBackupIfNewer()`).
+
 ## Uninstall
 
 ```bash
@@ -195,6 +219,15 @@ Two things worth knowing if this needs touching again:
   fire before the listener attaches, silently skipping the whole session.
   There's now also a `setTimeout` poll as a guaranteed fallback alongside
   the event.
+- **The JS-side race above has a Python-side mirror.** `window.pywebview.api`
+  going truthy in JS doesn't guarantee `BrowserView.instances["master"]` is
+  registered yet on the Python side — under the `file://` loading fix (see
+  "Data" above), the JS bridge can win that race more often since there's
+  no local HTTP server round-trip slowing it down. `apply_vibrancy()`'s
+  `_apply()` used to silently no-op if `browser_view` was `None`; it now
+  retries itself via `AppHelper.callLater` for a few hundred ms instead of
+  giving up, so a startup reapply that arrives "too early" self-heals
+  rather than requiring a manual retoggle.
 
 ## Seamless titlebar (why `app.py` pokes at private-ish AppKit views)
 
