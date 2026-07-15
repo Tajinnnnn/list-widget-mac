@@ -152,10 +152,35 @@ JS, available after the `pywebviewready` event fires). That method reaches
 into `webview.platforms.cocoa.BrowserView.instances["master"]` to grab the
 actual `WKWebView` and `NSWindow` pywebview created, then does by hand what
 `vibrancy=True`/`transparent=True` would have done at startup: sets
-`drawsTransparentBackground` on the webview, makes the window non-opaque,
-and inserts an `NSVisualEffectView` behind the webview. `todo.html` toggles
-a `body.vibrancy` CSS class (translucent instead of solid `--bg`) in lock
-step so the blur actually shows through.
+`underPageBackgroundColor` on the webview (the public, supported API for
+this — `drawsTransparentBackground` is a private, deprecated KVC hook kept
+only as a cheap extra nudge, not the real mechanism), makes the window
+non-opaque, **clears the window's own `backgroundColor`** (it defaults to
+a solid opaque fill from `configure_window_chrome` and blocks the blur
+from ever sampling real content if left alone — this was the actual fix
+after `underPageBackgroundColor` alone still didn't work), and inserts an
+`NSVisualEffectView` behind the webview. `todo.html` toggles a
+`body.vibrancy` CSS class (a heavily tinted, mostly-opaque color, not
+fully see-through — see below) in lock step.
+
+Two things worth knowing if this needs touching again:
+
+- **Blur radius is not adjustable.** NSVisualEffectView materials
+  (`.sidebar`, `.hudWindow`, `.fullScreenUI`, ...) differ in *tint*, not
+  blur strength — swapping materials was tested and made no visible
+  difference. macOS doesn't expose blur radius as a public API; matching
+  Control Center's blur exactly isn't possible without implementing blur
+  from scratch (continuously capturing + filtering whatever's behind the
+  window), which is a much bigger, more fragile undertaking than this
+  feature warrants. `body.vibrancy`'s tint is intentionally high (~90%
+  opacity) specifically to compensate — it's doing more of the visual
+  work than the actual blur is.
+- **Startup reapply is a race, not just an event listener.** If vibrancy
+  was left on, `todo.html` needs to reapply it once `window.pywebview.api`
+  exists. Relying solely on the `pywebviewready` event was flaky — it can
+  fire before the listener attaches, silently skipping the whole session.
+  There's now also a `setTimeout` poll as a guaranteed fallback alongside
+  the event.
 
 ## Seamless titlebar (why `app.py` pokes at private-ish AppKit views)
 

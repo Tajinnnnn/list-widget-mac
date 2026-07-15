@@ -35,9 +35,9 @@
     -webkit-user-select: none;
     user-select: none;
   }
-  body.vibrancy { background: rgba(22, 24, 29, 0.55); }
+  body.vibrancy { background: rgba(22, 24, 29, 0.9); }
   @media (prefers-color-scheme: light) {
-    body.vibrancy { background: rgba(246, 247, 249, 0.6); }
+    body.vibrancy { background: rgba(246, 247, 249, 0.9); }
   }
   .app {
     width: 100%;
@@ -1910,10 +1910,18 @@
   renderTabs();
   renderList();
 
-  // window.pywebview.api isn't ready until this event fires.
-  if (window.pywebview && window.pywebview.api) {
-    applyVibrancy(state.settings.vibrancy);
-  } else {
-    window.addEventListener("pywebviewready", () => applyVibrancy(state.settings.vibrancy), { once: true });
-  }
+  // window.pywebview.api isn't ready until "pywebviewready" fires, but
+  // relying on that event alone was flaky on relaunch — if it fires
+  // before this listener attaches (a real race, not just theoretical),
+  // vibrancy silently never gets (re)applied for that whole session.
+  // Poll as a guaranteed fallback alongside the event.
+  window.addEventListener("pywebviewready", () => applyVibrancy(state.settings.vibrancy), { once: true });
+  (function ensureVibrancyApplied() {
+    if (!state.settings.vibrancy) return;
+    if (window.pywebview && window.pywebview.api) {
+      applyVibrancy(true);
+    } else {
+      setTimeout(ensureVibrancyApplied, 200);
+    }
+  })();
 </script>

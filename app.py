@@ -220,8 +220,26 @@ def apply_vibrancy(enabled):
             webview_native = browser_view.webview
             ns_window = browser_view.window
 
+            # drawsTransparentBackground is a private, deprecated KVC hook
+            # that WebKit was resetting on its own repaints (worse now that
+            # the traffic-light buttons are reparented as real subviews
+            # directly on this WKWebView, which changes how it composites).
+            # underPageBackgroundColor is the public, supported API for
+            # "what shows through where the page itself doesn't paint" —
+            # use that as the actual mechanism and keep the old hook as a
+            # cheap extra nudge.
+            webview_native.setUnderPageBackgroundColor_(
+                AppKit.NSColor.clearColor() if enabled else _window_bg_color()
+            )
             webview_native.setValue_forKey_(bool(enabled), "drawsTransparentBackground")
             ns_window.setOpaque_(not enabled)
+            # The window's own backgroundColor was set to a solid opaque
+            # color once at startup (configure_window_chrome) and never
+            # revisited — that solid fill was likely blocking the "behind
+            # window" blur from ever sampling real desktop content.
+            ns_window.setBackgroundColor_(
+                AppKit.NSColor.clearColor() if enabled else _window_bg_color()
+            )
 
             # (The old titlebar decoration view that used to cause a seam
             # here is permanently hidden now — see configure_window_chrome.)
@@ -237,7 +255,7 @@ def apply_vibrancy(enabled):
                     )
                     effect.setWantsLayer_(True)
                     effect.setState_(AppKit.NSVisualEffectStateActive)
-                    effect.setMaterial_(AppKit.NSVisualEffectMaterialSidebar)
+                    effect.setMaterial_(AppKit.NSVisualEffectMaterialHUDWindow)
                     effect.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
                     webview_native.superview().addSubview_positioned_relativeTo_(
                         effect, AppKit.NSWindowBelow, webview_native
