@@ -561,8 +561,13 @@
   }
   .due-edit-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
+  }
+  .due-edit-row input[type="date"] {
+    flex: 1 1 auto;
+    min-width: 118px;
   }
   .due-edit input, .due-edit select {
     background: var(--bg);
@@ -578,6 +583,18 @@
   @media (prefers-color-scheme: light) {
     .due-edit input, .due-edit select { color-scheme: light; }
   }
+  .due-edit input.time-num {
+    width: 38px;
+    flex: none;
+    text-align: center;
+    -moz-appearance: textfield;
+  }
+  .due-edit input.time-num::-webkit-inner-spin-button,
+  .due-edit input.time-num::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .due-edit select.ampm-select { padding: 4px 4px; flex: none; }
   .due-edit button {
     background: none;
     border: none;
@@ -991,6 +1008,23 @@
     const d = new Date(iso);
     const pad = n => String(n).padStart(2, "0");
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  // Native <input type="time"> follows the system's regional format —
+  // on a 24-hour locale it never shows AM/PM at all. Use explicit
+  // hour/minute/AM-PM controls instead so it's consistent everywhere.
+  function to12Hour(hhmm) {
+    const [h, m] = hhmm.split(":").map(Number);
+    const ampm = h >= 12 ? "PM" : "AM";
+    let hour = h % 12;
+    if (hour === 0) hour = 12;
+    return { hour, minute: m, ampm };
+  }
+
+  function to24HourValue(hour12, minute, ampm) {
+    let h = Number(hour12) % 12;
+    if (ampm === "PM") h += 12;
+    return `${String(h).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   }
 
   function formatDue(iso) {
@@ -1586,8 +1620,41 @@
 
     const dateInp = document.createElement("input");
     dateInp.type = "date";
-    const timeInp = document.createElement("input");
-    timeInp.type = "time";
+
+    const hourInp = document.createElement("input");
+    hourInp.type = "number";
+    hourInp.min = "1";
+    hourInp.max = "12";
+    hourInp.className = "time-num";
+    hourInp.title = "Hour";
+
+    const minuteInp = document.createElement("input");
+    minuteInp.type = "number";
+    minuteInp.min = "0";
+    minuteInp.max = "59";
+    minuteInp.className = "time-num";
+    minuteInp.title = "Minute";
+
+    const ampmSelect = document.createElement("select");
+    ampmSelect.className = "ampm-select";
+    ["AM", "PM"].forEach(v => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      ampmSelect.appendChild(opt);
+    });
+
+    function setTimeFields(hhmm) {
+      const { hour, minute, ampm } = to12Hour(hhmm);
+      hourInp.value = hour;
+      minuteInp.value = String(minute).padStart(2, "0");
+      ampmSelect.value = ampm;
+    }
+    function getTimeValue() {
+      const h = Math.min(12, Math.max(1, Number(hourInp.value) || 12));
+      const m = Math.min(59, Math.max(0, Number(minuteInp.value) || 0));
+      return to24HourValue(h, m, ampmSelect.value);
+    }
 
     calBtn.onclick = () => {
       if (typeof dateInp.showPicker === "function") dateInp.showPicker();
@@ -1596,19 +1663,21 @@
 
     if (items[i].due) {
       dateInp.value = toDateInputValue(items[i].due);
-      timeInp.value = toTimeInputValue(items[i].due);
+      setTimeFields(toTimeInputValue(items[i].due));
     } else {
-      timeInp.value = "09:00";
+      setTimeFields("09:00");
     }
 
     const commitDue = () => {
       if (!dateInp.value) return;
-      items[i].due = new Date(`${dateInp.value}T${timeInp.value || "09:00"}`).toISOString();
+      items[i].due = new Date(`${dateInp.value}T${getTimeValue()}`).toISOString();
       items[i].notified = false;
       save(); renderList();
     };
     dateInp.onchange = commitDue;
-    timeInp.onchange = commitDue;
+    hourInp.onchange = commitDue;
+    minuteInp.onchange = commitDue;
+    ampmSelect.onchange = commitDue;
 
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
@@ -1620,7 +1689,7 @@
       save(); renderList();
     };
 
-    row.append(calBtn, dateInp, timeInp, clearBtn);
+    row.append(calBtn, dateInp, hourInp, minuteInp, ampmSelect, clearBtn);
 
     const repeatSelect = document.createElement("select");
     [["", "Doesn't repeat"], ["daily", "Repeats daily"], ["weekly", "Repeats weekly"], ["monthly", "Repeats monthly"]]
