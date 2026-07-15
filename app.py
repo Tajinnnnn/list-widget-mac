@@ -15,6 +15,8 @@ import WebKit
 from PIL import Image
 from PyObjCTools import AppHelper
 
+import vault_sync
+
 APP_TITLE = "List"
 LOCK_PATH = Path.home() / "Library" / "Application Support" / "List" / ".list.lock"
 BACKUP_PATH = Path.home() / "Library" / "Application Support" / "List" / "backup.json"
@@ -72,6 +74,10 @@ def write_backup(data):
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, BACKUP_PATH)
+    except Exception:
+        pass
+    try:
+        vault_sync.sync_push(json.loads(data))
     except Exception:
         pass
 
