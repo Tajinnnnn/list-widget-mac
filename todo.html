@@ -1968,6 +1968,33 @@
     ev.stopPropagation();
   };
 
+  // Called from Python (vault_sync poll loop / launch reconcile) after it
+  // has merged today's note against backup.json. `jsonStateString` is the
+  // full merged state, already reconciled — just adopt it, same as
+  // recoverFromBackupIfNewer does for the backup-is-newer case.
+  window.__applySyncedState = function (jsonStateString) {
+    let merged;
+    try {
+      merged = JSON.parse(jsonStateString);
+    } catch {
+      return;
+    }
+    if (!merged || !Array.isArray(merged.lists)) return;
+
+    state = merged;
+    state.lists.forEach(l => {
+      normalizeItems(l.items);
+      if (l.color === undefined) l.color = null;
+    });
+    if (!Array.isArray(state.tombstones)) state.tombstones = [];
+    lastItemFields = snapshotItemFields(state);
+    save();
+    if (!document.querySelector(".due-edit")) {
+      renderTabs();
+      renderList();
+    }
+  };
+
   // Called periodically from Python (even while the window is hidden in the
   // tray) to find due tasks and hand back native-notification payloads.
   window.__checkDueTasks = function () {
