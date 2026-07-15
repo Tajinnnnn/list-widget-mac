@@ -329,3 +329,32 @@ def merge(local: dict, remote: dict, note_mtime: str) -> dict:
 
     result["tombstones"] = purge_old_tombstones(list(tombstones_by_id.values()))
     return result
+
+
+def sync_push(state: dict, vault_root: Path = VAULT_ROOT) -> None:
+    try:
+        write_tasks_section(vault_root, state)
+    except Exception:
+        pass
+
+
+def sync_pull_and_merge(local_state: dict, vault_root: Path = VAULT_ROOT) -> dict | None:
+    try:
+        path = today_note_path(vault_root)
+        if not path.exists():
+            return None
+        note_text = path.read_text()
+        current_section = _extract_section(note_text, "## Tasks")
+        rendered = render_tasks_section(local_state)
+        if current_section is None:
+            write_tasks_section(vault_root, local_state)
+            return None
+        if current_section.strip() == rendered.strip():
+            return None
+        remote = parse_tasks_section(note_text)
+        note_mtime = _mtime_to_iso(path.stat().st_mtime)
+        merged = merge(local_state, remote, note_mtime)
+        write_tasks_section(vault_root, merged)
+        return merged
+    except Exception:
+        return None

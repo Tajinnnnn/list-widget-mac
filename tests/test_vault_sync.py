@@ -417,3 +417,48 @@ def test_purge_old_tombstones_drops_entries_older_than_3_days():
 def test_mtime_to_iso_format_matches_js_toisostring():
     iso = vault_sync._mtime_to_iso(1752566400.123)
     assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", iso)
+
+
+def test_sync_push_writes_note(tmp_path):
+    state = {"lists": [{"id": "list1", "name": "Tasks", "items": [_item()]}]}
+    vault_sync.sync_push(state, vault_root=tmp_path)
+    content = vault_sync.today_note_path(tmp_path).read_text()
+    assert "Get haircut" in content
+
+
+def test_sync_pull_and_merge_returns_none_when_note_missing(tmp_path):
+    local = _local_state()
+    assert vault_sync.sync_pull_and_merge(local, vault_root=tmp_path) is None
+
+
+def test_sync_pull_and_merge_returns_none_when_note_matches_local(tmp_path):
+    local = _local_state()
+    vault_sync.sync_push(local, vault_root=tmp_path)
+    assert vault_sync.sync_pull_and_merge(local, vault_root=tmp_path) is None
+
+
+def test_sync_pull_and_merge_returns_merged_state_on_external_edit(tmp_path):
+    local = _local_state()
+    vault_sync.sync_push(local, vault_root=tmp_path)
+
+    path = vault_sync.today_note_path(tmp_path)
+    text = path.read_text()
+    edited = text.replace("Existing task", "Edited by hand")
+    path.write_text(edited)
+
+    merged = vault_sync.sync_pull_and_merge(local, vault_root=tmp_path)
+    assert merged is not None
+    assert merged["lists"][0]["items"][0]["text"] == "Edited by hand"
+
+
+def test_sync_pull_and_merge_self_heals_note_missing_tasks_heading(tmp_path):
+    journals = tmp_path / "01 Journals" / "daily"
+    journals.mkdir(parents=True)
+    vault_sync.today_note_path(tmp_path).write_text("# No tasks section here\n")
+
+    local = _local_state()
+    result = vault_sync.sync_pull_and_merge(local, vault_root=tmp_path)
+    assert result is None
+    content = vault_sync.today_note_path(tmp_path).read_text()
+    assert "## Tasks" in content
+    assert "Existing task" in content
