@@ -15,6 +15,8 @@ import WebKit
 from PIL import Image
 from PyObjCTools import AppHelper
 
+import vault_sync
+
 APP_TITLE = "List"
 LOCK_PATH = Path.home() / "Library" / "Application Support" / "List" / ".list.lock"
 BACKUP_PATH = Path.home() / "Library" / "Application Support" / "List" / "backup.json"
@@ -23,6 +25,7 @@ WINDOW_WIDTH = 360
 WINDOW_HEIGHT = 540
 SCREEN_MARGIN = 12
 CHECK_INTERVAL_SECONDS = 20
+VAULT_SYNC_INTERVAL_SECONDS = 20
 
 
 def resource_path(relative):
@@ -72,6 +75,10 @@ def write_backup(data):
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, BACKUP_PATH)
+    except Exception:
+        pass
+    try:
+        vault_sync.sync_push(json.loads(data))
     except Exception:
         pass
 
@@ -442,6 +449,36 @@ def notification_loop():
             notify(f"Due now — {item.get('list', APP_TITLE)}", item.get("text", ""))
 
 
+def _run_vault_sync_cycle():
+    local_raw = read_backup()
+    if not local_raw:
+        return
+    try:
+        local_state = json.loads(local_raw)
+    except Exception:
+        return
+    merged = vault_sync.sync_pull_and_merge(local_state)
+    if merged is None:
+        return
+    try:
+        write_backup(json.dumps(merged))
+    except Exception:
+        return
+    try:
+        window.evaluate_js(f"window.__applySyncedState({json.dumps(json.dumps(merged))})")
+    except Exception:
+        pass
+
+
+def vault_sync_loop():
+    window.events.loaded.wait(timeout=15)
+    _run_vault_sync_cycle()
+    while not stop_event.is_set():
+        if stop_event.wait(VAULT_SYNC_INTERVAL_SECONDS):
+            break
+        _run_vault_sync_cycle()
+
+
 if __name__ == "__main__":
     if already_running():
         sys.exit(0)
@@ -481,6 +518,7 @@ if __name__ == "__main__":
 
     setup_tray()
     threading.Thread(target=notification_loop, daemon=True).start()
+    threading.Thread(target=vault_sync_loop, daemon=True).start()
 
     def _reassert_accessory_policy(attempts_left=6):
         # pywebview's run loop calls activateIgnoringOtherApps_ once shortly

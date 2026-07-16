@@ -655,6 +655,50 @@
 
   let state = load();
 
+  const TRACKED_ITEM_FIELDS = ["text", "done", "due", "pinned", "repeat"];
+
+  function snapshotItemFields(s) {
+    const map = new Map();
+    (s.lists || []).forEach(l => {
+      (l.items || []).forEach(it => {
+        const fields = {};
+        TRACKED_ITEM_FIELDS.forEach(k => { fields[k] = it[k]; });
+        map.set(it._id, fields);
+      });
+    });
+    return map;
+  }
+
+  function fieldsEqual(a, b) {
+    return TRACKED_ITEM_FIELDS.every(k => a[k] === b[k]);
+  }
+
+  let lastItemFields = snapshotItemFields(state);
+
+  function stampUpdatedAtAndTombstones() {
+    const now = new Date().toISOString();
+    const currentIds = new Set();
+    state.lists.forEach(l => {
+      l.items.forEach(it => {
+        currentIds.add(it._id);
+        const prev = lastItemFields.get(it._id);
+        const cur = {};
+        TRACKED_ITEM_FIELDS.forEach(k => { cur[k] = it[k]; });
+        if (!prev || !fieldsEqual(prev, cur)) {
+          it.updatedAt = now;
+        }
+      });
+    });
+    if (!Array.isArray(state.tombstones)) state.tombstones = [];
+    const tombstoneIds = new Set(state.tombstones.map(t => t._id));
+    lastItemFields.forEach((_, id) => {
+      if (!currentIds.has(id) && !tombstoneIds.has(id)) {
+        state.tombstones.push({ _id: id, updatedAt: now });
+      }
+    });
+    lastItemFields = snapshotItemFields(state);
+  }
+
   const tabsEl = document.getElementById("tabs");
   const list = document.getElementById("list");
   const input = document.getElementById("input");
@@ -668,6 +712,7 @@
       if (it.pinned === undefined) it.pinned = false;
       if (it.repeat === undefined) it.repeat = null;
       if (it.completedAt === undefined) it.completedAt = null;
+      if (it.updatedAt === undefined) it.updatedAt = new Date().toISOString();
       if (!it._id) it._id = uid();
     });
     return items || [];
@@ -803,6 +848,7 @@
     if (!result.settings.retention) result.settings.retention = "endOfDay";
     if (result.settings.vibrancy === undefined) result.settings.vibrancy = false;
     if (!result.settings.calendarView) result.settings.calendarView = "day";
+    if (!Array.isArray(result.tombstones)) result.tombstones = [];
 
     // One-time migration: the default first-list name changed from
     // "To-Do" to "Tasks". Only touch it once, so a list intentionally
@@ -816,6 +862,7 @@
   }
 
   function save() {
+    stampUpdatedAtAndTombstones();
     const json = JSON.stringify(state);
     localStorage.setItem(KEY, json);
     // Belt-and-suspenders backup: written to a plain file with an
@@ -847,6 +894,8 @@
           normalizeItems(l.items);
           if (l.color === undefined) l.color = null;
         });
+        if (!Array.isArray(state.tombstones)) state.tombstones = [];
+        lastItemFields = snapshotItemFields(state);
         save();
         renderTabs();
         renderList();
@@ -1917,6 +1966,33 @@
     tabMenuCloser = closeTabMenu;
     document.addEventListener("click", tabMenuCloser);
     ev.stopPropagation();
+  };
+
+  // Called from Python (vault_sync poll loop / launch reconcile) after it
+  // has merged today's note against backup.json. `jsonStateString` is the
+  // full merged state, already reconciled — just adopt it, same as
+  // recoverFromBackupIfNewer does for the backup-is-newer case.
+  window.__applySyncedState = function (jsonStateString) {
+    let merged;
+    try {
+      merged = JSON.parse(jsonStateString);
+    } catch {
+      return;
+    }
+    if (!merged || !Array.isArray(merged.lists)) return;
+
+    state = merged;
+    state.lists.forEach(l => {
+      normalizeItems(l.items);
+      if (l.color === undefined) l.color = null;
+    });
+    if (!Array.isArray(state.tombstones)) state.tombstones = [];
+    lastItemFields = snapshotItemFields(state);
+    save();
+    if (!document.querySelector(".due-edit")) {
+      renderTabs();
+      renderList();
+    }
   };
 
   // Called periodically from Python (even while the window is hidden in the
