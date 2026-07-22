@@ -367,6 +367,33 @@ class JsApi:
     def load_backup(self):
         return read_backup()
 
+    def export_list_text(self, text, suggested_name):
+        if window is None:
+            return False
+        result = window.create_file_dialog(
+            webview.FileDialog.SAVE,
+            directory=str(Path.home() / "Downloads"),
+            save_filename=f"{suggested_name}.txt",
+        )
+        if not result:
+            return False
+        path = result[0] if isinstance(result, (list, tuple)) else result
+        Path(path).write_text(text)
+        return True
+
+    def import_list_text(self):
+        if window is None:
+            return None
+        result = window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            directory=str(Path.home() / "Downloads"),
+            file_types=("Text files (*.txt)", "All files (*.*)"),
+        )
+        if not result:
+            return None
+        path = result[0] if isinstance(result, (list, tuple)) else result
+        return Path(path).read_text()
+
 
 class TrayIcon(pystray.Icon):
     """Left-click toggles the window directly; right-click shows a small

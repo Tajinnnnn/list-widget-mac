@@ -49,7 +49,7 @@
   header {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     /* left padding clears the traffic-light buttons, which float directly
        over the content now that the titlebar is transparent — top padding
        is kept tight so this row reads as part of that same corner instead
@@ -62,8 +62,8 @@
     border: none;
     color: var(--muted);
     cursor: pointer;
-    font-size: 25px;
-    padding: 5px 8px;
+    font-size: 18px;
+    padding: 4px 6px;
     line-height: 1;
     flex: none;
   }
@@ -352,6 +352,9 @@
   }
   .tab:hover .tab-x { opacity: .7; }
   .tab .tab-x:hover { opacity: 1 !important; color: #fff; }
+  .tab.dragging { opacity: .35; }
+  .tab.drag-over-left { box-shadow: inset 2px 0 0 0 var(--accent); }
+  .tab.drag-over-right { box-shadow: inset -2px 0 0 0 var(--accent); }
 
   .tab-menu {
     position: fixed;
@@ -577,6 +580,7 @@
     align-items: center;
     gap: 6px;
   }
+  .due-edit-row[hidden] { display: none; }
   .due-edit-row input[type="date"] {
     flex: 1 1 auto;
     min-width: 118px;
@@ -607,6 +611,16 @@
     margin: 0;
   }
   .due-edit select.ampm-select { padding: 4px 4px; flex: none; }
+  .due-edit label.allday-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12.5px;
+    color: var(--muted);
+    flex: none;
+    cursor: pointer;
+  }
+  .due-edit label.allday-toggle input { flex: none; }
   .due-edit button {
     background: none;
     border: none;
@@ -621,6 +635,22 @@
     flex: none;
   }
   .due-edit .cal-btn:hover { color: var(--accent); }
+  .weekday-row { gap: 4px; }
+  .due-edit button.weekday-btn {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 4px 6px;
+    flex: none;
+  }
+  .due-edit button.weekday-btn:hover { color: var(--text); }
+  .due-edit button.weekday-btn.selected {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
   .empty { text-align: center; color: var(--muted); padding: 40px 20px; font-size: 14px; }
   ul::-webkit-scrollbar { width: 8px; }
   ul::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
@@ -631,6 +661,7 @@
     <button id="backBtn" class="icon-btn" title="Back" hidden>←</button>
     <span class="count" id="count"></span>
     <button id="calStyleBtn" class="icon-btn" title="Calendar layout" hidden>⋯</button>
+    <button id="sortBtn" class="icon-btn" title="Sort">⇅</button>
     <button id="calendarBtn" class="icon-btn" title="Calendar">📅</button>
     <button id="archiveBtn" class="icon-btn" title="Completed tasks">🗂️</button>
     <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
@@ -655,7 +686,7 @@
 
   let state = load();
 
-  const TRACKED_ITEM_FIELDS = ["text", "done", "due", "pinned", "repeat"];
+  const TRACKED_ITEM_FIELDS = ["text", "done", "due", "dueAllDay", "pinned", "repeat", "repeatDays", "repeatWeekday", "repeatOccurrence"];
 
   function snapshotItemFields(s) {
     const map = new Map();
@@ -708,9 +739,13 @@
   function normalizeItems(items) {
     (items || []).forEach(it => {
       if (it.due === undefined) it.due = null;
+      if (it.dueAllDay === undefined) it.dueAllDay = false;
       if (it.notified === undefined) it.notified = false;
       if (it.pinned === undefined) it.pinned = false;
       if (it.repeat === undefined) it.repeat = null;
+      if (it.repeatDays === undefined) it.repeatDays = null;
+      if (it.repeatWeekday === undefined) it.repeatWeekday = null;
+      if (it.repeatOccurrence === undefined) it.repeatOccurrence = null;
       if (it.completedAt === undefined) it.completedAt = null;
       if (it.updatedAt === undefined) it.updatedAt = new Date().toISOString();
       if (!it._id) it._id = uid();
@@ -738,6 +773,24 @@
     }
     save();
     renderList();
+  }
+
+  // id of the list tab currently being drag-reordered.
+  let draggedListId = null;
+
+  function reorderList(draggedId, targetId, insertBefore) {
+    const lists = state.lists;
+    const fromIdx = lists.findIndex(x => x.id === draggedId);
+    if (fromIdx === -1) return;
+    const [moved] = lists.splice(fromIdx, 1);
+    const toIdx = lists.findIndex(x => x.id === targetId);
+    if (toIdx === -1) {
+      lists.push(moved);
+    } else {
+      lists.splice(insertBefore ? toIdx : toIdx + 1, 0, moved);
+    }
+    save();
+    renderTabs();
   }
 
   // "active" shows open tasks; "completed" shows the current list's
@@ -843,6 +896,7 @@
     result.lists.forEach(l => {
       normalizeItems(l.items);
       if (l.color === undefined) l.color = null;
+      if (l.syncToVault === undefined) l.syncToVault = true;
     });
     if (!result.settings) result.settings = {};
     if (!result.settings.retention) result.settings.retention = "endOfDay";
@@ -957,6 +1011,37 @@
         showTabMenu(l, tab, ev.clientX, ev.clientY);
       };
 
+      tab.draggable = true;
+      tab.ondragstart = ev => {
+        draggedListId = l.id;
+        tab.classList.add("dragging");
+        ev.dataTransfer.effectAllowed = "move";
+        ev.dataTransfer.setData("text/plain", l.id);
+      };
+      tab.ondragend = () => {
+        tab.classList.remove("dragging");
+        tabsEl.querySelectorAll(".drag-over-left, .drag-over-right")
+          .forEach(el => el.classList.remove("drag-over-left", "drag-over-right"));
+        draggedListId = null;
+      };
+      tab.ondragover = ev => {
+        if (!draggedListId || draggedListId === l.id) return;
+        ev.preventDefault();
+        const rect = tab.getBoundingClientRect();
+        const before = (ev.clientX - rect.left) < rect.width / 2;
+        tab.classList.toggle("drag-over-left", before);
+        tab.classList.toggle("drag-over-right", !before);
+      };
+      tab.ondragleave = () => tab.classList.remove("drag-over-left", "drag-over-right");
+      tab.ondrop = ev => {
+        ev.preventDefault();
+        tab.classList.remove("drag-over-left", "drag-over-right");
+        if (!draggedListId || draggedListId === l.id) return;
+        const rect = tab.getBoundingClientRect();
+        const before = (ev.clientX - rect.left) < rect.width / 2;
+        reorderList(draggedListId, l.id, before);
+      };
+
       tab.append(dot, name);
 
       if (state.lists.length > 1) {
@@ -982,7 +1067,7 @@
     addBtn.textContent = "+";
     addBtn.title = "New list";
     addBtn.onclick = () => {
-      const l = { id: uid(), name: "New list", items: [], color: null };
+      const l = { id: uid(), name: "New list", items: [], color: null, syncToVault: true };
       state.lists.push(l);
       state.active = l.id;
       save(); renderTabs(); renderList();
@@ -1043,6 +1128,35 @@
       if (nameEl) renameTab(l, tab, nameEl, true);
     };
     menu.appendChild(renameBtn);
+
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "tab-menu-item";
+    exportBtn.textContent = "Export as text";
+    exportBtn.onclick = () => {
+      closeTabMenu();
+      exportListAsText(l);
+    };
+    menu.appendChild(exportBtn);
+
+    const importBtn = document.createElement("button");
+    importBtn.className = "tab-menu-item";
+    importBtn.textContent = "Import from text";
+    importBtn.onclick = () => {
+      closeTabMenu();
+      importTextIntoList(l);
+    };
+    menu.appendChild(importBtn);
+
+    const syncBtn = document.createElement("button");
+    syncBtn.className = "tab-menu-item";
+    syncBtn.textContent = (l.syncToVault ? "✓ " : "　 ") + "Sync to Obsidian vault";
+    syncBtn.title = "When off, this list's tasks are excluded from the daily note sync";
+    syncBtn.onclick = () => {
+      l.syncToVault = !l.syncToVault;
+      save();
+      closeTabMenu();
+    };
+    menu.appendChild(syncBtn);
 
     menu.appendChild(Object.assign(document.createElement("div"), { className: "tab-menu-sep" }));
 
@@ -1123,6 +1237,64 @@
     document.addEventListener("click", tabMenuCloser);
   }
 
+  function sanitizeFilename(name) {
+    const cleaned = (name || "").trim().replace(/[^a-zA-Z0-9 _-]/g, "").trim().replace(/\s+/g, "-");
+    return cleaned || "list";
+  }
+
+  function exportListAsText(l) {
+    const text = l.items.map(it => it.text).join("\n") + "\n";
+    const filename = sanitizeFilename(l.name);
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.export_list_text) {
+      window.pywebview.api.export_list_text(text, filename).catch(() => {});
+      return;
+    }
+    // Browser fallback — used when running outside the packaged app (e.g. dev/testing).
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function addLinesToList(l, text) {
+    const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (!lines.length) return;
+    lines.forEach(line => {
+      l.items.push({
+        _id: uid(), text: line, done: false, due: null, dueAllDay: false, notified: false,
+        pinned: false, repeat: null, repeatDays: null, repeatWeekday: null,
+        repeatOccurrence: null, completedAt: null,
+      });
+    });
+    save(); renderTabs(); renderList();
+  }
+
+  function importTextIntoList(l) {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.import_list_text) {
+      window.pywebview.api.import_list_text().then(text => {
+        if (text) addLinesToList(l, text);
+      }).catch(() => {});
+      return;
+    }
+    // Browser fallback — used when running outside the packaged app (e.g. dev/testing).
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".txt,text/plain";
+    input.onchange = () => {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => addLinesToList(l, String(reader.result));
+      reader.readAsText(file);
+    };
+    input.click();
+  }
+
   function toDateInputValue(iso) {
     const d = new Date(iso);
     const pad = n => String(n).padStart(2, "0");
@@ -1152,8 +1324,11 @@
     return `${String(h).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   }
 
-  function formatDue(iso) {
+  function formatDue(iso, allDay) {
     const d = new Date(iso);
+    if (allDay) {
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
     const sameDay = d.toDateString() === new Date().toDateString();
     const opts = sameDay
       ? { hour: "numeric", minute: "2-digit" }
@@ -1161,15 +1336,83 @@
     return d.toLocaleString(undefined, opts);
   }
 
-  function repeatLabel(r) {
-    return r === "daily" ? "Daily" : r === "weekly" ? "Weekly" : r === "monthly" ? "Monthly" : "";
+  // All-day tasks are "due" for their whole calendar day — they only
+  // become overdue once that day has fully passed, not the instant its
+  // midnight timestamp is reached.
+  function isOverdue(item) {
+    const d = new Date(item.due);
+    if (item.dueAllDay) d.setHours(24, 0, 0, 0);
+    return d.getTime() <= Date.now();
   }
 
-  function nextOccurrence(iso, repeat) {
+  const WEEKDAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const OCCURRENCE_LABEL = { 1: "1st", 2: "2nd", 3: "3rd", 4: "4th", "-1": "Last" };
+
+  function parseRepeatDays(s) {
+    return s ? s.split(",").map(Number) : [];
+  }
+
+  // Which occurrence (1-4, or -1 for "last") the given date's weekday is
+  // within its own month — used to default the monthly picker.
+  function occurrenceInMonth(date) {
+    const next = new Date(date);
+    next.setDate(next.getDate() + 7);
+    if (next.getMonth() !== date.getMonth()) return -1;
+    return Math.floor((date.getDate() - 1) / 7) + 1;
+  }
+
+  function repeatLabel(item) {
+    const r = item.repeat;
+    if (r === "daily") return "Daily";
+    if (r === "weekly") {
+      const days = parseRepeatDays(item.repeatDays);
+      return days.length ? `Weekly (${days.map(d => WEEKDAY_ABBR[d]).join(", ")})` : "Weekly";
+    }
+    if (r === "monthly") {
+      if (item.repeatWeekday != null && item.repeatOccurrence != null) {
+        return `Monthly (${OCCURRENCE_LABEL[item.repeatOccurrence]} ${WEEKDAY_ABBR[item.repeatWeekday]})`;
+      }
+      return "Monthly";
+    }
+    return "";
+  }
+
+  // Nth (or, for occurrence -1, last) weekday of the given month, preserving
+  // baseDate's time-of-day. `month` may be 0-11 for the target month.
+  function nthWeekdayOfMonth(baseDate, year, month, weekday, occurrence) {
+    const h = baseDate.getHours(), m = baseDate.getMinutes(), s = baseDate.getSeconds();
+    if (occurrence === -1) {
+      const last = new Date(year, month + 1, 0, h, m, s);
+      const diff = (last.getDay() - weekday + 7) % 7;
+      last.setDate(last.getDate() - diff);
+      return last;
+    }
+    const first = new Date(year, month, 1, h, m, s);
+    const diff = (weekday - first.getDay() + 7) % 7;
+    const day = 1 + diff + (occurrence - 1) * 7;
+    return new Date(year, month, day, h, m, s);
+  }
+
+  function nextOccurrence(iso, item) {
     const d = new Date(iso);
-    if (repeat === "daily") d.setDate(d.getDate() + 1);
-    else if (repeat === "weekly") d.setDate(d.getDate() + 7);
-    else if (repeat === "monthly") d.setMonth(d.getMonth() + 1);
+    const repeat = item.repeat;
+    if (repeat === "daily") {
+      d.setDate(d.getDate() + 1);
+    } else if (repeat === "weekly") {
+      const days = parseRepeatDays(item.repeatDays);
+      if (days.length) {
+        do { d.setDate(d.getDate() + 1); } while (!days.includes(d.getDay()));
+      } else {
+        d.setDate(d.getDate() + 7);
+      }
+    } else if (repeat === "monthly") {
+      if (item.repeatWeekday != null && item.repeatOccurrence != null) {
+        let year = d.getFullYear(), month = d.getMonth() + 1;
+        if (month > 11) { month = 0; year++; }
+        return nthWeekdayOfMonth(d, year, month, item.repeatWeekday, item.repeatOccurrence).toISOString();
+      }
+      d.setMonth(d.getMonth() + 1);
+    }
     return d.toISOString();
   }
 
@@ -1247,7 +1490,7 @@
           items[i].done = true;
           items[i].completedAt = new Date().toISOString();
           if (items[i].repeat && items[i].due) {
-            items[i].due = nextOccurrence(items[i].due, items[i].repeat);
+            items[i].due = nextOccurrence(items[i].due, items[i]);
             items[i].done = false;
             items[i].completedAt = null;
             items[i].notified = false;
@@ -1268,11 +1511,11 @@
       txtWrap.appendChild(txt);
 
       if (it.due) {
-        const overdue = new Date(it.due).getTime() <= Date.now();
+        const overdue = isOverdue(it);
         const due = document.createElement("div");
         due.className = "due" + (overdue ? " overdue" : "");
-        due.textContent = (overdue ? "Overdue • " : "") + formatDue(it.due) +
-          (it.repeat ? " · ↻ " + repeatLabel(it.repeat) : "");
+        due.textContent = (overdue ? "Overdue • " : "") + formatDue(it.due, it.dueAllDay) +
+          (it.repeat ? " · ↻ " + repeatLabel(it) : "");
         due.title = "Click to change due date/time";
         due.onclick = () => toggleDueEdit(i, txtWrap);
         txtWrap.appendChild(due);
@@ -1490,7 +1733,7 @@
     entry.item.done = true;
     entry.item.completedAt = new Date().toISOString();
     if (entry.item.repeat && entry.item.due) {
-      entry.item.due = nextOccurrence(entry.item.due, entry.item.repeat);
+      entry.item.due = nextOccurrence(entry.item.due, entry.item);
       entry.item.done = false;
       entry.item.completedAt = null;
     }
@@ -1501,7 +1744,7 @@
   function buildCalChip(entry, opts) {
     opts = opts || {};
     const { item, list } = entry;
-    const overdue = new Date(item.due).getTime() <= Date.now();
+    const overdue = isOverdue(item);
     const chip = document.createElement("div");
     chip.className = "cal-chip" + (overdue ? " overdue" : "");
     if (list.color) chip.style.setProperty("--tab-color", list.color);
@@ -1526,7 +1769,7 @@
 
     const time = document.createElement("div");
     time.className = "time";
-    time.textContent = (overdue ? "Overdue · " : "") + (opts.timeText || formatDue(item.due));
+    time.textContent = (overdue ? "Overdue · " : "") + (opts.timeText || formatDue(item.due, item.dueAllDay));
     chip.appendChild(time);
 
     return chip;
@@ -1572,6 +1815,35 @@
     view.appendChild(nav);
 
     const dueToday = collectDueTasks().filter(e => sameDay(new Date(e.item.due), calendarDate));
+    const allDayToday = dueToday.filter(e => e.item.dueAllDay);
+    const timedToday = dueToday.filter(e => !e.item.dueAllDay);
+
+    if (allDayToday.length) {
+      const allDayRow = document.createElement("div");
+      allDayRow.className = "hour-row allday-row";
+      const allDayLabel = document.createElement("div");
+      allDayLabel.className = "hourlabel";
+      allDayLabel.textContent = "All day";
+      const allDaySlot = document.createElement("div");
+      allDaySlot.className = "slot";
+      allDayToday.forEach(e => {
+        const overdue = isOverdue(e.item);
+        const block = document.createElement("div");
+        block.className = "task-block" + (overdue ? " overdue" : "");
+        if (e.list.color) block.style.setProperty("--tab-color", e.list.color);
+        block.onclick = () => completeDueTask(e);
+        block.append(e.item.text);
+        if (state.lists.length > 1) {
+          const t = document.createElement("span");
+          t.className = "t";
+          t.textContent = e.list.name;
+          block.appendChild(t);
+        }
+        allDaySlot.appendChild(block);
+      });
+      allDayRow.append(allDayLabel, allDaySlot);
+      view.appendChild(allDayRow);
+    }
 
     const grid = document.createElement("div");
     grid.className = "hourgrid";
@@ -1583,8 +1855,8 @@
       hourLabel.textContent = new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: "numeric" });
       const slot = document.createElement("div");
       slot.className = "slot";
-      dueToday.filter(e => new Date(e.item.due).getHours() === h).forEach(e => {
-        const overdue = new Date(e.item.due).getTime() <= Date.now();
+      timedToday.filter(e => new Date(e.item.due).getHours() === h).forEach(e => {
+        const overdue = isOverdue(e.item);
         const block = document.createElement("div");
         block.className = "task-block" + (overdue ? " overdue" : "");
         if (e.list.color) block.style.setProperty("--tab-color", e.list.color);
@@ -1592,7 +1864,7 @@
         block.append(e.item.text);
         const t = document.createElement("span");
         t.className = "t";
-        t.textContent = formatDue(e.item.due) + (state.lists.length > 1 ? " · " + e.list.name : "");
+        t.textContent = formatDue(e.item.due, e.item.dueAllDay) + (state.lists.length > 1 ? " · " + e.list.name : "");
         block.appendChild(t);
         slot.appendChild(block);
       });
@@ -1603,13 +1875,14 @@
     list.appendChild(view);
 
     requestAnimationFrame(() => {
-      const targetHour = isToday ? today.getHours() : (dueToday[0] ? new Date(dueToday[0].item.due).getHours() : 8);
+      const targetHour = isToday ? today.getHours() : (timedToday[0] ? new Date(timedToday[0].item.due).getHours() : 8);
       const rows = grid.querySelectorAll(".hour-row");
       if (rows[targetHour]) list.scrollTop = Math.max(0, rows[targetHour].offsetTop - 30);
     });
   }
 
-  function agendaTimeText(iso, groupKey) {
+  function agendaTimeText(iso, groupKey, allDay) {
+    if (allDay) return "All day";
     const d = new Date(iso);
     if (groupKey === "today" || groupKey === "tomorrow") {
       return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -1658,7 +1931,7 @@
       const listWrap = document.createElement("div");
       listWrap.className = "cal-list";
       items.forEach(e => {
-        listWrap.appendChild(buildCalChip(e, { timeText: agendaTimeText(e.item.due, key), showList: true }));
+        listWrap.appendChild(buildCalChip(e, { timeText: agendaTimeText(e.item.due, key, e.item.dueAllDay), showList: true }));
       });
       g.appendChild(listWrap);
       view.appendChild(g);
@@ -1764,7 +2037,13 @@
 
   function toggleDueEdit(i, container) {
     const existing = container.querySelector(".due-edit");
-    if (existing) { existing.remove(); return; }
+    if (existing) {
+      // Weekday/monthly-occurrence picks save() without a full renderList
+      // (so the panel stays open across multiple picks) — refresh here so
+      // the row's "↻ Weekly (...)" label reflects them once it closes.
+      renderList();
+      return;
+    }
 
     const items = activeList().items;
     const wrap = document.createElement("div");
@@ -1829,9 +2108,26 @@
       setTimeFields("09:00");
     }
 
+    const allDayLabel = document.createElement("label");
+    allDayLabel.className = "allday-toggle";
+    const allDayCheckbox = document.createElement("input");
+    allDayCheckbox.type = "checkbox";
+    allDayCheckbox.checked = !!items[i].dueAllDay;
+    allDayLabel.append(allDayCheckbox, "All day");
+
+    function updateTimeFieldsVisibility() {
+      const allDay = allDayCheckbox.checked;
+      hourInp.hidden = allDay;
+      minuteInp.hidden = allDay;
+      ampmSelect.hidden = allDay;
+    }
+    updateTimeFieldsVisibility();
+
     const commitDue = () => {
       if (!dateInp.value) return;
-      items[i].due = new Date(`${dateInp.value}T${getTimeValue()}`).toISOString();
+      const time = allDayCheckbox.checked ? "00:00" : getTimeValue();
+      items[i].due = new Date(`${dateInp.value}T${time}`).toISOString();
+      items[i].dueAllDay = allDayCheckbox.checked;
       items[i].notified = false;
       save(); renderList();
     };
@@ -1839,18 +2135,26 @@
     hourInp.onchange = commitDue;
     minuteInp.onchange = commitDue;
     ampmSelect.onchange = commitDue;
+    allDayCheckbox.onchange = () => {
+      updateTimeFieldsVisibility();
+      commitDue();
+    };
 
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
     clearBtn.textContent = "Clear";
     clearBtn.onclick = () => {
       items[i].due = null;
+      items[i].dueAllDay = false;
       items[i].notified = false;
       items[i].repeat = null;
+      items[i].repeatDays = null;
+      items[i].repeatWeekday = null;
+      items[i].repeatOccurrence = null;
       save(); renderList();
     };
 
-    row.append(calBtn, dateInp, hourInp, minuteInp, ampmSelect, clearBtn);
+    row.append(calBtn, dateInp, hourInp, minuteInp, ampmSelect, allDayLabel, clearBtn);
 
     const repeatSelect = document.createElement("select");
     [["", "Doesn't repeat"], ["daily", "Repeats daily"], ["weekly", "Repeats weekly"], ["monthly", "Repeats monthly"]]
@@ -1866,7 +2170,71 @@
       save(); renderList();
     };
 
-    wrap.append(row, repeatSelect);
+    // Weekly day-of-week picker. Selecting "weekly" from repeatSelect closes
+    // this whole panel (its onchange saves + re-renders, same as every other
+    // field here) — so by the time this row is ever visible, items[i].repeat
+    // is already "weekly" and items[i].due already reflects the saved date.
+    // Defaulting to that date's weekday, and toggling days without a
+    // re-render, is what lets multiple days be picked in one sitting.
+    const weekdayRow = document.createElement("div");
+    weekdayRow.className = "due-edit-row weekday-row";
+    weekdayRow.hidden = items[i].repeat !== "weekly";
+    const selectedDays = new Set(parseRepeatDays(items[i].repeatDays));
+    if (items[i].repeat === "weekly" && !selectedDays.size && items[i].due) {
+      selectedDays.add(new Date(items[i].due).getDay());
+      items[i].repeatDays = [...selectedDays].join(",");
+    }
+    WEEKDAY_ABBR.forEach((label, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "weekday-btn" + (selectedDays.has(idx) ? " selected" : "");
+      btn.textContent = label;
+      btn.onclick = () => {
+        if (selectedDays.has(idx)) selectedDays.delete(idx); else selectedDays.add(idx);
+        items[i].repeatDays = selectedDays.size ? [...selectedDays].sort((a, b) => a - b).join(",") : null;
+        btn.classList.toggle("selected", selectedDays.has(idx));
+        save();
+      };
+      weekdayRow.appendChild(btn);
+    });
+
+    // Monthly Nth-weekday picker — same "closes on repeat-type change,
+    // already-saved by the time it's shown" reasoning as the weekly row.
+    const monthlyRow = document.createElement("div");
+    monthlyRow.className = "due-edit-row";
+    monthlyRow.hidden = items[i].repeat !== "monthly";
+    if (items[i].repeat === "monthly" && items[i].repeatWeekday == null && items[i].due) {
+      const d = new Date(items[i].due);
+      items[i].repeatWeekday = d.getDay();
+      items[i].repeatOccurrence = occurrenceInMonth(d);
+    }
+    const monthOccurrenceSelect = document.createElement("select");
+    [[1, "1st"], [2, "2nd"], [3, "3rd"], [4, "4th"], [-1, "Last"]].forEach(([value, label]) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      if ((items[i].repeatOccurrence ?? 1) === value) opt.selected = true;
+      monthOccurrenceSelect.appendChild(opt);
+    });
+    const monthWeekdaySelect = document.createElement("select");
+    WEEKDAY_ABBR.forEach((label, idx) => {
+      const opt = document.createElement("option");
+      opt.value = idx;
+      opt.textContent = label;
+      if ((items[i].repeatWeekday ?? 0) === idx) opt.selected = true;
+      monthWeekdaySelect.appendChild(opt);
+    });
+    monthOccurrenceSelect.onchange = () => {
+      items[i].repeatOccurrence = Number(monthOccurrenceSelect.value);
+      save();
+    };
+    monthWeekdaySelect.onchange = () => {
+      items[i].repeatWeekday = Number(monthWeekdaySelect.value);
+      save();
+    };
+    monthlyRow.append(monthOccurrenceSelect, monthWeekdaySelect);
+
+    wrap.append(row, repeatSelect, weekdayRow, monthlyRow);
     container.appendChild(wrap);
     dateInp.focus();
   }
@@ -1896,10 +2264,11 @@
     const v = input.value.trim();
     if (!v) return;
     const newItem = {
-      _id: uid(), text: v, done: false, due: null, notified: false,
-      pinned: false, repeat: null, completedAt: null,
+      _id: uid(), text: v, done: false, due: null, dueAllDay: false, notified: false,
+      pinned: false, repeat: null, repeatDays: null, repeatWeekday: null,
+      repeatOccurrence: null, completedAt: null,
     };
-    activeList().items.unshift(newItem);
+    activeList().items.push(newItem);
     pendingEnterId = newItem._id;
     input.value = "";
     playPopSound();
@@ -1908,6 +2277,7 @@
 
   const backBtn = document.getElementById("backBtn");
   const calStyleBtn = document.getElementById("calStyleBtn");
+  const sortBtn = document.getElementById("sortBtn");
   const calendarBtn = document.getElementById("calendarBtn");
   const archiveBtn = document.getElementById("archiveBtn");
   const settingsBtn = document.getElementById("settingsBtn");
@@ -1968,6 +2338,47 @@
     ev.stopPropagation();
   };
 
+  const SORT_OPTIONS = [
+    ["due", "Due date", (a, b) => {
+      if (a.due && b.due) return new Date(a.due) - new Date(b.due);
+      if (a.due) return -1;
+      if (b.due) return 1;
+      return 0;
+    }],
+    ["alpha", "A–Z", (a, b) => a.text.toLowerCase().localeCompare(b.text.toLowerCase())],
+  ];
+
+  sortBtn.onclick = ev => {
+    closeTabMenu();
+    const menu = document.createElement("div");
+    menu.className = "tab-menu";
+    menu.onclick = e => e.stopPropagation();
+
+    SORT_OPTIONS.forEach(([value, text, comparator]) => {
+      const item = document.createElement("button");
+      item.className = "tab-menu-item";
+      item.textContent = text;
+      item.onclick = () => {
+        activeList().items.sort(comparator);
+        closeTabMenu();
+        save();
+        renderList();
+      };
+      menu.appendChild(item);
+    });
+
+    document.body.appendChild(menu);
+    const rect = sortBtn.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth;
+    const maxX = window.innerWidth - menuWidth - 8;
+    menu.style.left = Math.max(8, Math.min(rect.left, maxX)) + "px";
+    menu.style.top = (rect.bottom + 6) + "px";
+
+    tabMenuCloser = closeTabMenu;
+    document.addEventListener("click", tabMenuCloser);
+    ev.stopPropagation();
+  };
+
   // Called from Python (vault_sync poll loop / launch reconcile) after it
   // has merged today's note against backup.json. `jsonStateString` is the
   // full merged state, already reconciled — just adopt it, same as
@@ -1985,6 +2396,7 @@
     state.lists.forEach(l => {
       normalizeItems(l.items);
       if (l.color === undefined) l.color = null;
+      if (l.syncToVault === undefined) l.syncToVault = true;
     });
     if (!Array.isArray(state.tombstones)) state.tombstones = [];
     lastItemFields = snapshotItemFields(state);
@@ -2002,7 +2414,7 @@
     const dueNow = [];
     state.lists.forEach(l => {
       l.items.forEach(it => {
-        if (it.due && !it.done && !it.notified && new Date(it.due).getTime() <= now) {
+        if (it.due && !it.dueAllDay && !it.done && !it.notified && new Date(it.due).getTime() <= now) {
           it.notified = true;
           dueNow.push({ list: l.name, text: it.text });
         }

@@ -1,8 +1,15 @@
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import vault_sync
+
+
+def _recent_iso(minutes_ago=0):
+    # Tombstone-related merge tests need timestamps within purge_old_tombstones'
+    # 3-day cutoff of the real clock, not hardcoded dates that age out.
+    dt = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def test_today_note_path(tmp_path):
@@ -102,10 +109,73 @@ def test_format_item_line_pinned_and_repeat():
     assert line == "- [ ] Gym 📌 🔁 daily <!--id:abc123-->"
 
 
+def test_format_item_line_weekly_with_days():
+    line = vault_sync._format_item_line(_item(repeat="weekly", repeatDays="1,3,5"))
+    assert "🔁 weekly:Mon,Wed,Fri" in line
+
+
+def test_format_item_line_monthly_with_occurrence():
+    line = vault_sync._format_item_line(_item(repeat="monthly", repeatWeekday=2, repeatOccurrence=2))
+    assert "🔁 monthly:2nd-Tue" in line
+
+
+def test_weekly_days_roundtrip_through_line():
+    line = vault_sync._format_item_line(_item(repeat="weekly", repeatDays="1,3,5"))
+    note = f"## Tasks\n### Tasks <!--id:list1-->\n{line}\n"
+    parsed = vault_sync.parse_tasks_section(note)
+    item = parsed["lists"][0]["items"][0]
+    assert item["repeat"] == "weekly"
+    assert item["repeatDays"] == "1,3,5"
+
+
+def test_monthly_occurrence_roundtrip_through_line():
+    line = vault_sync._format_item_line(_item(repeat="monthly", repeatWeekday=2, repeatOccurrence=2))
+    note = f"## Tasks\n### Tasks <!--id:list1-->\n{line}\n"
+    parsed = vault_sync.parse_tasks_section(note)
+    item = parsed["lists"][0]["items"][0]
+    assert item["repeat"] == "monthly"
+    assert item["repeatWeekday"] == 2
+    assert item["repeatOccurrence"] == 2
+
+
+def test_bare_repeat_tag_still_parses_with_no_days():
+    note = "## Tasks\n### Tasks <!--id:list1-->\n- [ ] Gym 🔁 weekly <!--id:abc123-->\n"
+    parsed = vault_sync.parse_tasks_section(note)
+    item = parsed["lists"][0]["items"][0]
+    assert item["repeat"] == "weekly"
+    assert item["repeatDays"] is None
+    assert item["repeatWeekday"] is None
+    assert item["repeatOccurrence"] is None
+
+
 def test_format_item_line_with_due_contains_marker():
     line = vault_sync._format_item_line(_item(due="2026-08-01T04:59:00.000Z"))
     assert "📅 " in line
     assert line.endswith("<!--id:abc123-->")
+
+
+def test_format_item_line_all_day_due_has_no_time():
+    line = vault_sync._format_item_line(_item(due="2026-08-01T04:59:00.000Z", dueAllDay=True))
+    assert re.search(r"📅 \d{4}-\d{2}-\d{2} <!--", line)
+
+
+def test_all_day_due_roundtrip_through_line():
+    line = vault_sync._format_item_line(_item(due="2026-08-01T04:59:00.000Z", dueAllDay=True))
+    note = f"## Tasks\n### Tasks <!--id:list1-->\n{line}\n"
+    parsed = vault_sync.parse_tasks_section(note)
+    item = parsed["lists"][0]["items"][0]
+    assert item["dueAllDay"] is True
+    assert item["due"] is not None
+
+
+def test_timed_due_roundtrip_still_not_all_day():
+    original = "2026-08-01T04:59:00.000Z"
+    line = vault_sync._format_item_line(_item(due=original, dueAllDay=False))
+    note = f"## Tasks\n### Tasks <!--id:list1-->\n{line}\n"
+    parsed = vault_sync.parse_tasks_section(note)
+    item = parsed["lists"][0]["items"][0]
+    assert item["dueAllDay"] is False
+    assert item["due"] == original
 
 
 def test_format_item_line_with_source_list():
@@ -126,6 +196,30 @@ def test_render_tasks_section_groups_by_list():
     assert "- [ ] Get haircut <!--id:abc123-->" in section
     assert "- [ ] Ship it <!--id:def456-->" in section
     assert "### Completed today" in section
+
+
+def test_render_tasks_section_excludes_list_with_sync_off():
+    state = {
+        "lists": [
+            {"id": "list1", "name": "Tasks", "items": [_item()]},
+            {"id": "list2", "name": "Private", "syncToVault": False,
+             "items": [_item(_id="def456", text="Secret")]},
+        ]
+    }
+    section = vault_sync.render_tasks_section(state)
+    assert "### Tasks <!--id:list1-->" in section
+    assert "Private" not in section
+    assert "Secret" not in section
+
+
+def test_render_tasks_section_includes_list_with_sync_on():
+    state = {
+        "lists": [
+            {"id": "list1", "name": "Tasks", "syncToVault": True, "items": [_item()]},
+        ]
+    }
+    section = vault_sync.render_tasks_section(state)
+    assert "### Tasks <!--id:list1-->" in section
 
 
 def test_render_tasks_section_completed_today_rollup():
@@ -175,11 +269,13 @@ def test_parse_tasks_section_basic_roundtrip():
     haircut, gym = lst["items"]
     assert haircut == {
         "id": "abc123", "text": "Get haircut", "done": False,
-        "due": None, "pinned": False, "repeat": None,
+        "due": None, "dueAllDay": False, "pinned": False, "repeat": None,
+        "repeatDays": None, "repeatWeekday": None, "repeatOccurrence": None,
     }
     assert gym == {
         "id": "def456", "text": "Gym", "done": True,
-        "due": None, "pinned": True, "repeat": "daily",
+        "due": None, "dueAllDay": False, "pinned": True, "repeat": "daily",
+        "repeatDays": None, "repeatWeekday": None, "repeatOccurrence": None,
     }
 
 
@@ -345,9 +441,10 @@ def test_merge_item_added_in_note_without_id_gets_minted_id():
 def test_merge_item_deleted_in_note_becomes_tombstone():
     local = _local_state()
     remote = _remote_list([])
-    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    note_mtime = _recent_iso()
+    merged = vault_sync.merge(local, remote, note_mtime)
     assert merged["lists"][0]["items"] == []
-    assert merged["tombstones"] == [{"_id": "a1", "updatedAt": "2026-07-15T09:00:00.000Z"}]
+    assert merged["tombstones"] == [{"_id": "a1", "updatedAt": note_mtime}]
 
 
 def test_merge_deletion_older_than_local_edit_does_not_stick():
@@ -376,14 +473,27 @@ def test_merge_resurrects_item_edited_after_tombstone():
 def test_merge_tombstone_newer_than_note_edit_stays_deleted():
     local = _local_state()
     local["lists"][0]["items"] = []
-    local["tombstones"] = [{"_id": "a1", "updatedAt": "2026-07-16T09:00:00.000Z"}]
+    tombstone_time = _recent_iso()
+    note_mtime = _recent_iso(minutes_ago=10)
+    local["tombstones"] = [{"_id": "a1", "updatedAt": tombstone_time}]
     remote = _remote_list([
         {"id": "a1", "text": "Stale leftover line", "done": False, "due": None,
          "pinned": False, "repeat": None},
     ])
-    merged = vault_sync.merge(local, remote, "2026-07-15T09:00:00.000Z")
+    merged = vault_sync.merge(local, remote, note_mtime)
     assert merged["lists"][0]["items"] == []
-    assert merged["tombstones"] == [{"_id": "a1", "updatedAt": "2026-07-16T09:00:00.000Z"}]
+    assert merged["tombstones"] == [{"_id": "a1", "updatedAt": tombstone_time}]
+
+
+def test_merge_leaves_sync_off_list_untouched_when_absent_from_remote():
+    # A syncToVault=False list is never written to the note by
+    # render_tasks_section, so it can never appear in `remote` — merge must
+    # not mistake that absence for the items having been deleted in the note.
+    local = _local_state(syncToVault=False)
+    remote = {"lists": []}
+    merged = vault_sync.merge(local, remote, _recent_iso())
+    assert merged["lists"][0]["items"] == local["lists"][0]["items"]
+    assert merged["tombstones"] == []
 
 
 def test_merge_new_list_from_note_gets_added():

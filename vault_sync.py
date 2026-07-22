@@ -61,15 +61,35 @@ def _upsert_section(text: str, heading: str, body: str) -> str:
     return "\n".join(new_lines)
 
 
-def _due_to_display(due_iso: str) -> str:
+def _due_to_display(due_iso: str, all_day: bool = False) -> str:
     dt = datetime.fromisoformat(due_iso.replace("Z", "+00:00")).astimezone()
+    if all_day:
+        return dt.strftime("%Y-%m-%d")
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
 def _display_to_due(display: str) -> str:
-    naive_local = datetime.strptime(display, "%Y-%m-%d %H:%M")
+    fmt = "%Y-%m-%d %H:%M" if " " in display else "%Y-%m-%d"
+    naive_local = datetime.strptime(display, fmt)
     aware_local = naive_local.astimezone()
     return aware_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+_WEEKDAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+_OCCURRENCE_LABEL = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", -1: "last"}
+_OCCURRENCE_VALUE = {v: k for k, v in _OCCURRENCE_LABEL.items()}
+
+
+def _repeat_suffix(item: dict) -> str:
+    repeat = item.get("repeat")
+    if repeat == "weekly" and item.get("repeatDays"):
+        indices = [int(x) for x in item["repeatDays"].split(",")]
+        return ":" + ",".join(_WEEKDAY_ABBR[i] for i in indices)
+    if repeat == "monthly" and item.get("repeatWeekday") is not None and item.get("repeatOccurrence") is not None:
+        occurrence = _OCCURRENCE_LABEL[item["repeatOccurrence"]]
+        weekday = _WEEKDAY_ABBR[item["repeatWeekday"]]
+        return f":{occurrence}-{weekday}"
+    return ""
 
 
 def _format_item_line(item: dict, source_list_name: str | None = None) -> str:
@@ -79,10 +99,10 @@ def _format_item_line(item: dict, source_list_name: str | None = None) -> str:
         parts.append("📌")
     due = item.get("due")
     if due:
-        parts.append(f"📅 {_due_to_display(due)}")
+        parts.append(f"📅 {_due_to_display(due, item.get('dueAllDay'))}")
     repeat = item.get("repeat")
     if repeat:
-        parts.append(f"🔁 {repeat}")
+        parts.append(f"🔁 {repeat}{_repeat_suffix(item)}")
     if source_list_name:
         parts.append(f"({source_list_name})")
     body = " ".join(parts)
@@ -100,6 +120,8 @@ def render_tasks_section(state: dict) -> str:
     completed_today: list[tuple[dict, str]] = []
 
     for lst in state.get("lists", []):
+        if lst.get("syncToVault") is False:
+            continue
         lines.append(f"### {lst.get('name', '')} <!--id:{lst.get('id', '')}-->")
         for item in lst.get("items", []):
             lines.append(_format_item_line(item))
@@ -121,8 +143,28 @@ def render_tasks_section(state: dict) -> str:
 _ITEM_LINE_RE = re.compile(r"^- \[([ xX])\]\s+(?P<rest>.+?)\s*<!--id:(?P<id>[A-Za-z0-9]+)-->\s*$")
 _LIST_HEADING_RE = re.compile(r"^### (?P<name>.+?)(?:\s*<!--id:(?P<id>[A-Za-z0-9]+)-->)?\s*$")
 _PINNED_RE = re.compile(r"\s*📌\s*")
-_DUE_RE = re.compile(r"\s*📅\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*")
-_REPEAT_RE = re.compile(r"\s*🔁\s*(daily|weekly|monthly)\s*")
+_DUE_RE = re.compile(r"\s*📅\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}))?\s*")
+_REPEAT_RE = re.compile(r"\s*🔁\s*(daily|weekly|monthly)(?::([A-Za-z0-9,\-]+))?\s*")
+
+
+def _parse_repeat_suffix(repeat: str, suffix: str | None) -> tuple[str | None, int | None, int | None]:
+    """Returns (repeatDays, repeatWeekday, repeatOccurrence) decoded from a
+    `weekly:Mon,Wed,Fri` / `monthly:2nd-Tue` suffix. Falls back to all-None
+    (legacy/bare tag, or an unrecognized suffix) rather than raising."""
+    if not suffix:
+        return None, None, None
+    if repeat == "weekly":
+        abbrs = suffix.split(",")
+        if all(a in _WEEKDAY_ABBR for a in abbrs):
+            indices = sorted(_WEEKDAY_ABBR.index(a) for a in abbrs)
+            return ",".join(str(i) for i in indices), None, None
+        return None, None, None
+    if repeat == "monthly":
+        occurrence_str, _, weekday_str = suffix.partition("-")
+        if occurrence_str in _OCCURRENCE_VALUE and weekday_str in _WEEKDAY_ABBR:
+            return None, _WEEKDAY_ABBR.index(weekday_str), _OCCURRENCE_VALUE[occurrence_str]
+        return None, None, None
+    return None, None, None
 
 
 def _parse_item_line(line: str) -> dict | None:
@@ -135,15 +177,23 @@ def _parse_item_line(line: str) -> dict | None:
     rest = _PINNED_RE.sub(" ", rest)
 
     due = None
+    due_all_day = False
     due_match = _DUE_RE.search(rest)
     if due_match:
-        due = _display_to_due(due_match.group(1))
+        date_str, time_str = due_match.group(1), due_match.group(2)
+        if time_str:
+            due = _display_to_due(f"{date_str} {time_str}")
+        else:
+            due = _display_to_due(date_str)
+            due_all_day = True
         rest = _DUE_RE.sub(" ", rest)
 
     repeat = None
+    repeat_days = repeat_weekday = repeat_occurrence = None
     repeat_match = _REPEAT_RE.search(rest)
     if repeat_match:
         repeat = repeat_match.group(1)
+        repeat_days, repeat_weekday, repeat_occurrence = _parse_repeat_suffix(repeat, repeat_match.group(2))
         rest = _REPEAT_RE.sub(" ", rest)
 
     text = " ".join(rest.split()).strip()
@@ -153,8 +203,12 @@ def _parse_item_line(line: str) -> dict | None:
         "text": text,
         "done": match.group(1).lower() == "x",
         "due": due,
+        "dueAllDay": due_all_day,
         "pinned": pinned,
         "repeat": repeat,
+        "repeatDays": repeat_days,
+        "repeatWeekday": repeat_weekday,
+        "repeatOccurrence": repeat_occurrence,
     }
 
 
@@ -209,7 +263,17 @@ def _mtime_to_iso(mtime: float) -> str:
 
 
 def _render_key(d: dict) -> tuple:
-    return (d.get("text", ""), bool(d.get("done")), d.get("due"), bool(d.get("pinned")), d.get("repeat"))
+    return (
+        d.get("text", ""),
+        bool(d.get("done")),
+        d.get("due"),
+        bool(d.get("dueAllDay")),
+        bool(d.get("pinned")),
+        d.get("repeat"),
+        d.get("repeatDays"),
+        d.get("repeatWeekday"),
+        d.get("repeatOccurrence"),
+    )
 
 
 def _remote_to_item(r_item: dict, item_id: str, updated_at: str) -> dict:
@@ -218,9 +282,13 @@ def _remote_to_item(r_item: dict, item_id: str, updated_at: str) -> dict:
         "text": r_item.get("text", ""),
         "done": bool(r_item.get("done")),
         "due": r_item.get("due"),
+        "dueAllDay": bool(r_item.get("dueAllDay")),
         "notified": False,
         "pinned": bool(r_item.get("pinned")),
         "repeat": r_item.get("repeat"),
+        "repeatDays": r_item.get("repeatDays"),
+        "repeatWeekday": r_item.get("repeatWeekday"),
+        "repeatOccurrence": r_item.get("repeatOccurrence"),
         "completedAt": updated_at if r_item.get("done") else None,
         "updatedAt": updated_at,
     }
@@ -231,8 +299,12 @@ def _apply_remote_to_item(local_item: dict, r_item: dict, updated_at: str) -> No
     local_item["text"] = r_item.get("text", "")
     local_item["done"] = bool(r_item.get("done"))
     local_item["due"] = r_item.get("due")
+    local_item["dueAllDay"] = bool(r_item.get("dueAllDay"))
     local_item["pinned"] = bool(r_item.get("pinned"))
     local_item["repeat"] = r_item.get("repeat")
+    local_item["repeatDays"] = r_item.get("repeatDays")
+    local_item["repeatWeekday"] = r_item.get("repeatWeekday")
+    local_item["repeatOccurrence"] = r_item.get("repeatOccurrence")
     local_item["updatedAt"] = updated_at
     if local_item["done"] and not was_done:
         local_item["completedAt"] = updated_at
@@ -320,8 +392,15 @@ def merge(local: dict, remote: dict, note_mtime: str) -> dict:
     # Items missing from remote: tombstone them if note_mtime is newer than their updatedAt.
     # This handles items deleted in the note; gated by timestamp to prevent re-deletion
     # if they were modified locally after the note was last written.
+    #
+    # Lists with syncToVault=False are never written to the note by
+    # render_tasks_section, so they can never appear in `remote` — without
+    # this guard, every item in an excluded list would look "deleted in the
+    # note" on the very next pull and get wiped out.
     for item_id, (lst, item) in list(local_items_by_id.items()):
         if item_id in seen_remote_item_ids:
+            continue
+        if lst.get("syncToVault") is False:
             continue
         if note_mtime > item.get("updatedAt", ""):
             lst["items"] = [it for it in lst["items"] if it["_id"] != item_id]
