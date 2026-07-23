@@ -13,10 +13,25 @@ sounds, etc.) aren't automatically in that repo.
 - `todo.html` — the entire UI/logic (tabs, due dates, repeats, sounds,
   animations, the Completed/Settings views, localStorage persistence).
   Pure HTML/JS.
-- `app.py` — the native shell: creates the hidden `pywebview` window, the
-  menu bar icon (`pystray`, left-click toggles the window directly,
-  right-click shows Hide/Quit), positions the window under the menu bar,
-  fires native notifications for due tasks, and enforces single-instance.
+- `app.py` — thin entrypoint that wires up the native shell: creates the
+  hidden `pywebview` window, the menu bar icon, and the background threads,
+  then hands control to `webview.start()`. The actual logic lives in:
+  - `config.py` — constants and `resource_path()` (PyInstaller-safe path
+    resolution)
+  - `state.py` — shared runtime state (`window`, `tray_icon`, `visible`,
+    `stop_event`)
+  - `single_instance.py` — the `flock`-based single-instance guard
+  - `backup.py` — the durable JSON backup file (fallback to WKWebView's
+    localStorage) and its vault-sync push
+  - `window_chrome.py` — the private-ish AppKit/WebKit poking for the
+    borderless titlebar and live vibrancy toggle
+  - `window_controls.py` — show/hide/toggle/quit and menu-bar positioning
+  - `js_api.py` — the `JsApi` bridge exposed to `todo.html` via
+    `window.pywebview.api`
+  - `tray.py` — the `pystray` menu bar icon (left-click toggles, right-click
+    shows Hide/Quit)
+  - `notifications.py` — native due-task notifications via `osascript`
+  - `sync_worker.py` — the background vault-sync poll loop
 - `make_icon.py` — generates `icon.icns` (app icon) and `menubar_icon.png`
   (status bar glyph, a monochrome template image) from a small vector
   drawing.
