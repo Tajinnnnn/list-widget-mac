@@ -124,6 +124,8 @@ def render_tasks_section(state: dict) -> str:
             continue
         lines.append(f"### {lst.get('name', '')} <!--id:{lst.get('id', '')}-->")
         for item in lst.get("items", []):
+            if item.get("type") == "note":
+                continue
             lines.append(_format_item_line(item))
             completed_at = item.get("completedAt")
             if item.get("done") and completed_at and _to_local_date_str(completed_at) == today_str:
@@ -397,10 +399,16 @@ def merge(local: dict, remote: dict, note_mtime: str) -> dict:
     # render_tasks_section, so they can never appear in `remote` — without
     # this guard, every item in an excluded list would look "deleted in the
     # note" on the very next pull and get wiped out.
+    #
+    # Note-typed items get the same guard: render_tasks_section skips them
+    # too, for the same reason (they're deliberately excluded from the
+    # vault round trip), so they'd otherwise look "deleted" on every pull.
     for item_id, (lst, item) in list(local_items_by_id.items()):
         if item_id in seen_remote_item_ids:
             continue
         if lst.get("syncToVault") is False:
+            continue
+        if item.get("type") == "note":
             continue
         if note_mtime > item.get("updatedAt", ""):
             lst["items"] = [it for it in lst["items"] if it["_id"] != item_id]

@@ -449,6 +449,38 @@
     width: 90px;
   }
 
+  .tab.drag-over-group { box-shadow: inset 0 0 0 2px var(--accent); }
+
+  .island {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 6px 6px;
+    border-radius: 14px;
+    border: 1px solid var(--island-color, var(--line));
+    background: color-mix(in srgb, var(--island-color, var(--line)) 10%, transparent);
+    flex: none;
+  }
+  .island-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--island-color, var(--muted));
+    cursor: pointer;
+    user-select: none;
+  }
+  .island-chevron { font-size: 9px; flex: none; }
+  .island-name { font-weight: 600; white-space: nowrap; }
+  .island-body { display: flex; align-items: center; gap: 6px; }
+  .island-pill {
+    border: 1px solid var(--island-color, var(--line));
+    background: color-mix(in srgb, var(--island-color, var(--line)) 14%, var(--panel));
+  }
+  .island-pill.drag-over-group { box-shadow: inset 0 0 0 2px var(--accent); }
+  .island-pill.active-member { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
   .add {
     display: flex;
     gap: 8px;
@@ -481,6 +513,18 @@
     line-height: 1;
   }
   .add button:active { transform: scale(.96); }
+  .add-type-toggle {
+    flex: none;
+    width: 36px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--muted);
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .add-type-toggle.note-mode { color: var(--accent); border-color: var(--accent); }
+  .add-type-toggle:active { transform: scale(.96); }
   ul { list-style: none; overflow-y: auto; flex: 1; padding: 0 12px 16px; }
   li {
     display: flex;
@@ -505,6 +549,36 @@
   li.dragging { opacity: .35; }
   li.drag-over-top { box-shadow: inset 0 2px 0 0 var(--accent); }
   li.drag-over-bottom { box-shadow: inset 0 -2px 0 0 var(--accent); }
+  li.drag-over-route { box-shadow: inset 0 0 0 2px var(--accent); background: var(--panel); }
+  li.note-row .txt { font-style: italic; color: var(--muted); }
+  li.note-row { border-left: 2px dashed var(--line); }
+  .note-indicator {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 4px;
+    flex: none;
+  }
+  li:hover .note-indicator { opacity: 1; }
+  .note-indicator.expanded { opacity: 1; color: var(--accent); }
+  .note-indicator:hover { color: var(--accent); }
+  .note-attached {
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: var(--bg);
+    border: 1px dashed var(--line);
+    border-radius: 7px;
+    font-size: 12.5px;
+    font-style: italic;
+    color: var(--muted);
+    white-space: pre-wrap;
+    cursor: grab;
+  }
+  .note-attached.dragging { opacity: .35; }
   .drag-handle {
     opacity: 0;
     color: var(--muted);
@@ -669,6 +743,7 @@
   <div class="tabs" id="tabs"></div>
   <ul id="list"></ul>
   <form class="add" id="form">
+    <button type="button" id="addTypeToggle" class="add-type-toggle" title="Adding a task — click to switch to a note">☑</button>
     <input id="input" placeholder="Add a task…" autocomplete="off" autofocus>
     <button type="submit" title="Add">+</button>
   </form>
@@ -748,6 +823,8 @@
       if (it.repeatOccurrence === undefined) it.repeatOccurrence = null;
       if (it.completedAt === undefined) it.completedAt = null;
       if (it.updatedAt === undefined) it.updatedAt = new Date().toISOString();
+      if (it.type === undefined) it.type = "task";
+      if (it.note === undefined) it.note = null;
       if (!it._id) it._id = uid();
     });
     return items || [];
@@ -759,6 +836,11 @@
 
   // id of the item currently being drag-reordered in the active list.
   let draggedItemId = null;
+
+  // id of the task whose attached note is being drag-pulled back out into
+  // a standalone note item. Distinct from draggedItemId since the dragged
+  // element here (the expanded note-text row) isn't itself an items[] entry.
+  let draggedAttachedFromId = null;
 
   function reorderItem(draggedId, targetId, insertBefore) {
     const items = activeList().items;
@@ -775,13 +857,44 @@
     renderList();
   }
 
+  // Moves a standalone note item's text onto a task's `note` field
+  // (appending if the task already has one) and removes the note item.
+  function routeNoteOntoTask(noteId, taskId) {
+    const items = activeList().items;
+    const noteIdx = items.findIndex(x => x._id === noteId);
+    const task = items.find(x => x._id === taskId);
+    if (noteIdx === -1 || !task) return;
+    const note = items[noteIdx];
+    task.note = task.note ? task.note + "\n" + note.text : note.text;
+    items.splice(noteIdx, 1);
+    save();
+    renderList();
+  }
+
+  // Dropping a dragged attached-note handle in open list space (not onto
+  // another task, which stopPropagation's before this ever runs) un-routes
+  // it back into a standalone note item.
+  list.ondragover = ev => { if (draggedAttachedFromId) ev.preventDefault(); };
+  list.ondrop = ev => {
+    ev.preventDefault();
+    if (!draggedAttachedFromId) return;
+    const items = activeList().items;
+    const task = items.find(x => x._id === draggedAttachedFromId);
+    draggedAttachedFromId = null;
+    if (!task || !task.note) return;
+    items.push({ _id: uid(), type: "note", text: task.note });
+    task.note = null;
+    save();
+    renderList();
+  };
+
   // id of the list tab currently being drag-reordered.
   let draggedListId = null;
 
-  function reorderList(draggedId, targetId, insertBefore) {
+  function spliceListTo(draggedId, targetId, insertBefore) {
     const lists = state.lists;
     const fromIdx = lists.findIndex(x => x.id === draggedId);
-    if (fromIdx === -1) return;
+    if (fromIdx === -1) return false;
     const [moved] = lists.splice(fromIdx, 1);
     const toIdx = lists.findIndex(x => x.id === targetId);
     if (toIdx === -1) {
@@ -789,8 +902,92 @@
     } else {
       lists.splice(insertBefore ? toIdx : toIdx + 1, 0, moved);
     }
+    return true;
+  }
+
+  function reorderList(draggedId, targetId, insertBefore) {
+    if (!spliceListTo(draggedId, targetId, insertBefore)) return;
     save();
     renderTabs();
+  }
+
+  // Islands group list tabs. Membership is kept contiguous in state.lists
+  // by normalizeIslandContiguity() (called from save()), so island tabs
+  // never end up split apart by an unrelated drag elsewhere in the strip.
+  function nextIslandName() {
+    const base = "Island";
+    const existing = new Set(state.islands.map(x => x.name));
+    if (!existing.has(base)) return base;
+    let n = 2;
+    while (existing.has(`${base} ${n}`)) n++;
+    return `${base} ${n}`;
+  }
+
+  // Rebuilds state.lists so every island's members sit adjacent to each
+  // other, at the position of that island's first-encountered member.
+  // Idempotent when already contiguous; cheap enough to run on every save
+  // given how small these lists are.
+  function normalizeIslandContiguity() {
+    if (!state.islands || !state.islands.length) return;
+    const lists = state.lists;
+    const seen = new Set();
+    const result = [];
+    lists.forEach(l => {
+      if (l.islandId) {
+        if (seen.has(l.islandId)) return;
+        seen.add(l.islandId);
+        result.push(...lists.filter(x => x.islandId === l.islandId));
+      } else {
+        result.push(l);
+      }
+    });
+    state.lists = result;
+  }
+
+  // Dissolves an island once it has 1 or fewer members left, clearing
+  // islandId on any remaining member so it becomes a standalone tab.
+  function dissolveIslandIfSingleton(islandId) {
+    const members = state.lists.filter(l => l.islandId === islandId);
+    if (members.length <= 1) {
+      members.forEach(l => { l.islandId = null; });
+      state.islands = state.islands.filter(x => x.id !== islandId);
+    }
+  }
+
+  function ungroupIsland(islandId) {
+    state.lists.forEach(l => { if (l.islandId === islandId) l.islandId = null; });
+    state.islands = state.islands.filter(x => x.id !== islandId);
+    save(); renderTabs(); renderList();
+  }
+
+  // Forms/joins an island when a tab is dropped onto another tab's center
+  // zone. Whichever side already belongs to an island absorbs the other;
+  // if neither does, a brand-new island is created containing both.
+  function groupTabs(draggedId, targetId) {
+    const dragged = state.lists.find(x => x.id === draggedId);
+    const target = state.lists.find(x => x.id === targetId);
+    if (!dragged || !target) return;
+
+    if (dragged.islandId && dragged.islandId === target.islandId) {
+      reorderList(draggedId, targetId, true);
+      return;
+    }
+
+    const prevIslandId = dragged.islandId;
+    let islandId = target.islandId;
+    if (!islandId) {
+      islandId = uid();
+      state.islands.push({ id: islandId, name: nextIslandName(), color: null, collapsed: false });
+      target.islandId = islandId;
+    }
+    dragged.islandId = islandId;
+
+    spliceListTo(draggedId, targetId, true);
+    if (prevIslandId) dissolveIslandIfSingleton(prevIslandId);
+
+    save();
+    renderTabs();
+    renderList();
   }
 
   // "active" shows open tasks; "completed" shows the current list's
@@ -897,12 +1094,14 @@
       normalizeItems(l.items);
       if (l.color === undefined) l.color = null;
       if (l.syncToVault === undefined) l.syncToVault = true;
+      if (l.islandId === undefined) l.islandId = null;
     });
     if (!result.settings) result.settings = {};
     if (!result.settings.retention) result.settings.retention = "endOfDay";
     if (result.settings.vibrancy === undefined) result.settings.vibrancy = false;
     if (!result.settings.calendarView) result.settings.calendarView = "day";
     if (!Array.isArray(result.tombstones)) result.tombstones = [];
+    if (!Array.isArray(result.islands)) result.islands = [];
 
     // One-time migration: the default first-list name changed from
     // "To-Do" to "Tasks". Only touch it once, so a list intentionally
@@ -916,6 +1115,7 @@
   }
 
   function save() {
+    normalizeIslandContiguity();
     stampUpdatedAtAndTombstones();
     const json = JSON.stringify(state);
     localStorage.setItem(KEY, json);
@@ -989,77 +1189,226 @@
     if (changed) save();
   }
 
+  function buildTabEl(l) {
+    const tab = document.createElement("div");
+    tab.className = "tab" + (l.id === state.active ? " active" : "");
+    tab.dataset.listId = l.id;
+    if (l.color) tab.style.setProperty("--tab-color", l.color);
+
+    const dot = document.createElement("span");
+    dot.className = "tab-dot";
+
+    const name = document.createElement("span");
+    name.className = "tab-name-text";
+    name.textContent = l.name;
+    name.ondblclick = ev => { ev.stopPropagation(); renameTab(l, tab, name); };
+
+    tab.onclick = () => { state.active = l.id; save(); renderTabs(); renderList(); };
+    tab.oncontextmenu = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showTabMenu(l, tab, ev.clientX, ev.clientY);
+    };
+
+    tab.draggable = true;
+    tab.ondragstart = ev => {
+      draggedListId = l.id;
+      tab.classList.add("dragging");
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", l.id);
+    };
+    tab.ondragend = () => {
+      tab.classList.remove("dragging");
+      tabsEl.querySelectorAll(".drag-over-left, .drag-over-right, .drag-over-group")
+        .forEach(el => el.classList.remove("drag-over-left", "drag-over-right", "drag-over-group"));
+      draggedListId = null;
+    };
+    tab.ondragover = ev => {
+      if (!draggedListId || draggedListId === l.id) return;
+      ev.preventDefault();
+      const rect = tab.getBoundingClientRect();
+      const pct = (ev.clientX - rect.left) / rect.width;
+      tab.classList.toggle("drag-over-left", pct < 0.33);
+      tab.classList.toggle("drag-over-group", pct >= 0.33 && pct <= 0.67);
+      tab.classList.toggle("drag-over-right", pct > 0.67);
+    };
+    tab.ondragleave = () => tab.classList.remove("drag-over-left", "drag-over-right", "drag-over-group");
+    tab.ondrop = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      tab.classList.remove("drag-over-left", "drag-over-right", "drag-over-group");
+      if (!draggedListId || draggedListId === l.id) return;
+      const rect = tab.getBoundingClientRect();
+      const pct = (ev.clientX - rect.left) / rect.width;
+      if (pct >= 0.33 && pct <= 0.67) {
+        groupTabs(draggedListId, l.id);
+      } else {
+        reorderList(draggedListId, l.id, pct < 0.33);
+      }
+    };
+
+    tab.append(dot, name);
+
+    if (state.lists.length > 1) {
+      const x = document.createElement("span");
+      x.className = "tab-x";
+      x.textContent = "×";
+      x.title = "Delete list";
+      x.onclick = ev => {
+        ev.stopPropagation();
+        if (!confirm(`Delete the "${l.name}" list and all its tasks?`)) return;
+        const islandId = l.islandId;
+        state.lists = state.lists.filter(x2 => x2.id !== l.id);
+        if (state.active === l.id) state.active = state.lists[0].id;
+        if (islandId) dissolveIslandIfSingleton(islandId);
+        save(); renderTabs(); renderList();
+      };
+      tab.appendChild(x);
+    }
+
+    return tab;
+  }
+
+  function renameIsland(island, nameEl) {
+    const inp = document.createElement("input");
+    inp.className = "tab-name-input";
+    inp.value = island.name;
+    nameEl.replaceWith(inp);
+    inp.focus();
+    inp.select();
+    const commit = () => {
+      const v = inp.value.trim();
+      island.name = v || island.name;
+      save(); renderTabs(); renderList();
+    };
+    inp.onblur = commit;
+    inp.onkeydown = e => {
+      if (e.key === "Enter") inp.blur();
+      if (e.key === "Escape") { inp.onblur = null; renderTabs(); }
+    };
+    inp.onclick = ev => ev.stopPropagation();
+  }
+
+  // Members of an expanded island, wrapped in a labeled bracket with a
+  // collapse chevron. Drops that land in the label/body gaps (not on a
+  // member tab) are swallowed here rather than falling through to
+  // tabsEl's own drop handler, which would otherwise misread them as
+  // "drag out to open space" and ungroup the dragged tab.
+  function buildIslandWrapper(island, members) {
+    const wrap = document.createElement("div");
+    wrap.className = "island";
+    wrap.dataset.islandId = island.id;
+    if (island.color) wrap.style.setProperty("--island-color", island.color);
+    wrap.ondragover = ev => { if (draggedListId) ev.preventDefault(); };
+    wrap.ondrop = ev => { ev.preventDefault(); ev.stopPropagation(); };
+
+    const label = document.createElement("div");
+    label.className = "island-label";
+
+    const chevron = document.createElement("span");
+    chevron.className = "island-chevron";
+    chevron.textContent = "▾";
+    label.appendChild(chevron);
+
+    const name = document.createElement("span");
+    name.className = "island-name";
+    name.textContent = island.name;
+    name.ondblclick = ev => { ev.stopPropagation(); renameIsland(island, name); };
+    label.appendChild(name);
+
+    label.onclick = () => { island.collapsed = true; save(); renderTabs(); renderList(); };
+    label.oncontextmenu = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showIslandMenu(island, ev.clientX, ev.clientY);
+    };
+
+    wrap.appendChild(label);
+
+    const body = document.createElement("div");
+    body.className = "island-body";
+    members.forEach(m => body.appendChild(buildTabEl(m)));
+    wrap.appendChild(body);
+
+    return wrap;
+  }
+
+  // A collapsed island renders as a single pill; dropping a dragged tab
+  // onto it joins that tab into the island (appended after its last member).
+  function buildIslandPill(island, members) {
+    const pill = document.createElement("div");
+    pill.className = "tab island-pill" + (members.some(m => m.id === state.active) ? " active-member" : "");
+    pill.dataset.islandId = island.id;
+    if (island.color) pill.style.setProperty("--island-color", island.color);
+
+    const chevron = document.createElement("span");
+    chevron.className = "island-chevron";
+    chevron.textContent = "▸";
+    pill.appendChild(chevron);
+
+    const name = document.createElement("span");
+    name.className = "island-name";
+    name.textContent = `${island.name} (${members.length})`;
+    name.ondblclick = ev => { ev.stopPropagation(); renameIsland(island, name); };
+    pill.appendChild(name);
+
+    pill.onclick = () => { island.collapsed = false; save(); renderTabs(); renderList(); };
+    pill.oncontextmenu = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showIslandMenu(island, ev.clientX, ev.clientY);
+    };
+
+    pill.ondragover = ev => {
+      if (!draggedListId) return;
+      const dragged = state.lists.find(x => x.id === draggedListId);
+      if (dragged && dragged.islandId === island.id) return;
+      ev.preventDefault();
+      pill.classList.add("drag-over-group");
+    };
+    pill.ondragleave = () => pill.classList.remove("drag-over-group");
+    pill.ondrop = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      pill.classList.remove("drag-over-group");
+      if (!draggedListId) return;
+      const dragged = state.lists.find(x => x.id === draggedListId);
+      if (!dragged || dragged.islandId === island.id) return;
+      const prevIslandId = dragged.islandId;
+      dragged.islandId = island.id;
+      spliceListTo(draggedListId, members[members.length - 1].id, false);
+      if (prevIslandId) dissolveIslandIfSingleton(prevIslandId);
+      save(); renderTabs(); renderList();
+    };
+
+    return pill;
+  }
+
   function renderTabs() {
     tabsEl.innerHTML = "";
+    const rendered = new Set();
+
     state.lists.forEach(l => {
-      const tab = document.createElement("div");
-      tab.className = "tab" + (l.id === state.active ? " active" : "");
-      if (l.color) tab.style.setProperty("--tab-color", l.color);
+      if (rendered.has(l.id)) return;
 
-      const dot = document.createElement("span");
-      dot.className = "tab-dot";
-
-      const name = document.createElement("span");
-      name.className = "tab-name-text";
-      name.textContent = l.name;
-      name.ondblclick = ev => { ev.stopPropagation(); renameTab(l, tab, name); };
-
-      tab.onclick = () => { state.active = l.id; save(); renderTabs(); renderList(); };
-      tab.oncontextmenu = ev => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        showTabMenu(l, tab, ev.clientX, ev.clientY);
-      };
-
-      tab.draggable = true;
-      tab.ondragstart = ev => {
-        draggedListId = l.id;
-        tab.classList.add("dragging");
-        ev.dataTransfer.effectAllowed = "move";
-        ev.dataTransfer.setData("text/plain", l.id);
-      };
-      tab.ondragend = () => {
-        tab.classList.remove("dragging");
-        tabsEl.querySelectorAll(".drag-over-left, .drag-over-right")
-          .forEach(el => el.classList.remove("drag-over-left", "drag-over-right"));
-        draggedListId = null;
-      };
-      tab.ondragover = ev => {
-        if (!draggedListId || draggedListId === l.id) return;
-        ev.preventDefault();
-        const rect = tab.getBoundingClientRect();
-        const before = (ev.clientX - rect.left) < rect.width / 2;
-        tab.classList.toggle("drag-over-left", before);
-        tab.classList.toggle("drag-over-right", !before);
-      };
-      tab.ondragleave = () => tab.classList.remove("drag-over-left", "drag-over-right");
-      tab.ondrop = ev => {
-        ev.preventDefault();
-        tab.classList.remove("drag-over-left", "drag-over-right");
-        if (!draggedListId || draggedListId === l.id) return;
-        const rect = tab.getBoundingClientRect();
-        const before = (ev.clientX - rect.left) < rect.width / 2;
-        reorderList(draggedListId, l.id, before);
-      };
-
-      tab.append(dot, name);
-
-      if (state.lists.length > 1) {
-        const x = document.createElement("span");
-        x.className = "tab-x";
-        x.textContent = "×";
-        x.title = "Delete list";
-        x.onclick = ev => {
-          ev.stopPropagation();
-          if (!confirm(`Delete the "${l.name}" list and all its tasks?`)) return;
-          state.lists = state.lists.filter(x2 => x2.id !== l.id);
-          if (state.active === l.id) state.active = state.lists[0].id;
-          save(); renderTabs(); renderList();
-        };
-        tab.appendChild(x);
+      if (!l.islandId) {
+        tabsEl.appendChild(buildTabEl(l));
+        rendered.add(l.id);
+        return;
       }
 
-      tabsEl.appendChild(tab);
+      const members = state.lists.filter(x => x.islandId === l.islandId);
+      members.forEach(m => rendered.add(m.id));
+
+      const island = state.islands.find(x => x.id === l.islandId);
+      if (!island) {
+        // Orphaned islandId with no matching island record - render as
+        // plain standalone tabs rather than losing them from the strip.
+        members.forEach(m => tabsEl.appendChild(buildTabEl(m)));
+        return;
+      }
+
+      tabsEl.appendChild(island.collapsed ? buildIslandPill(island, members) : buildIslandWrapper(island, members));
     });
 
     const addBtn = document.createElement("button");
@@ -1067,19 +1416,34 @@
     addBtn.textContent = "+";
     addBtn.title = "New list";
     addBtn.onclick = () => {
-      const l = { id: uid(), name: "New list", items: [], color: null, syncToVault: true };
+      const l = { id: uid(), name: "New list", items: [], color: null, syncToVault: true, islandId: null };
       state.lists.push(l);
       state.active = l.id;
       save(); renderTabs(); renderList();
       requestAnimationFrame(() => {
-        const tabs = tabsEl.querySelectorAll(".tab");
-        const lastTab = tabs[tabs.length - 1];
+        const lastTab = tabsEl.querySelector(`.tab[data-list-id="${l.id}"]`);
         const nameEl = lastTab && lastTab.querySelector(".tab-name-text");
         if (lastTab && nameEl) renameTab(l, lastTab, nameEl, true);
       });
     };
     tabsEl.appendChild(addBtn);
   }
+
+  // Dropping a dragged tab in open tab-strip space (not onto another tab
+  // or into an island's own drop handlers, which stopPropagation before
+  // this ever runs) clears its island membership.
+  tabsEl.ondragover = ev => { if (draggedListId) ev.preventDefault(); };
+  tabsEl.ondrop = ev => {
+    ev.preventDefault();
+    if (!draggedListId) return;
+    const l = state.lists.find(x => x.id === draggedListId);
+    if (l && l.islandId) {
+      const prevIslandId = l.islandId;
+      l.islandId = null;
+      dissolveIslandIfSingleton(prevIslandId);
+      save(); renderTabs(); renderList();
+    }
+  };
 
   function renameTab(l, tab, nameEl, selectAll) {
     const inp = document.createElement("input");
@@ -1217,12 +1581,105 @@
       deleteBtn.onclick = () => {
         closeTabMenu();
         if (!confirm(`Delete the "${l.name}" list and all its tasks?`)) return;
+        const islandId = l.islandId;
         state.lists = state.lists.filter(x => x.id !== l.id);
         if (state.active === l.id) state.active = state.lists[0].id;
+        if (islandId) dissolveIslandIfSingleton(islandId);
         save(); renderTabs(); renderList();
       };
       menu.appendChild(deleteBtn);
     }
+
+    document.body.appendChild(menu);
+
+    const menuWidth = menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+    const maxX = window.innerWidth - menuWidth - 8;
+    const maxY = window.innerHeight - menuHeight - 8;
+    menu.style.left = Math.max(8, Math.min(x, maxX)) + "px";
+    menu.style.top = Math.max(8, Math.min(y, maxY)) + "px";
+
+    tabMenuCloser = closeTabMenu;
+    document.addEventListener("click", tabMenuCloser);
+  }
+
+  function showIslandMenu(island, x, y) {
+    closeTabMenu();
+
+    const menu = document.createElement("div");
+    menu.className = "tab-menu";
+    menu.onclick = ev => ev.stopPropagation();
+
+    const renameBtn = document.createElement("button");
+    renameBtn.className = "tab-menu-item";
+    renameBtn.textContent = "Rename";
+    renameBtn.onclick = () => {
+      closeTabMenu();
+      const nameEl = document.querySelector(`[data-island-id="${island.id}"] .island-name`);
+      if (nameEl) renameIsland(island, nameEl);
+    };
+    menu.appendChild(renameBtn);
+
+    menu.appendChild(Object.assign(document.createElement("div"), { className: "tab-menu-sep" }));
+
+    const colorLabel = document.createElement("div");
+    colorLabel.className = "tab-menu-label";
+    colorLabel.textContent = "Color";
+    menu.appendChild(colorLabel);
+
+    const colors = document.createElement("div");
+    colors.className = "tab-menu-colors";
+
+    const noneSwatch = document.createElement("button");
+    noneSwatch.className = "tab-menu-swatch" + (!island.color ? " selected" : "");
+    noneSwatch.title = "Default";
+    noneSwatch.style.background = "var(--muted)";
+    noneSwatch.onclick = () => {
+      island.color = null;
+      save(); renderTabs();
+      closeTabMenu();
+    };
+    colors.appendChild(noneSwatch);
+
+    LIST_COLORS.forEach(color => {
+      const swatch = document.createElement("button");
+      swatch.className = "tab-menu-swatch" + (island.color === color ? " selected" : "");
+      swatch.style.background = color;
+      swatch.onclick = () => {
+        island.color = color;
+        save(); renderTabs();
+        closeTabMenu();
+      };
+      colors.appendChild(swatch);
+    });
+
+    const wheelLabel = document.createElement("label");
+    wheelLabel.className = "tab-menu-wheel-label";
+    wheelLabel.title = "Custom color";
+    wheelLabel.append("🎨 Custom");
+
+    const wheel = document.createElement("input");
+    wheel.type = "color";
+    wheel.className = "tab-menu-wheel";
+    wheel.value = island.color && /^#[0-9a-f]{6}$/i.test(island.color) ? island.color : "#6ea8fe";
+    wheel.onchange = () => {
+      island.color = wheel.value;
+      save(); renderTabs();
+    };
+    wheelLabel.appendChild(wheel);
+    colors.appendChild(wheelLabel);
+
+    menu.appendChild(colors);
+
+    menu.appendChild(Object.assign(document.createElement("div"), { className: "tab-menu-sep" }));
+    const ungroupBtn = document.createElement("button");
+    ungroupBtn.className = "tab-menu-item danger";
+    ungroupBtn.textContent = "Ungroup all";
+    ungroupBtn.onclick = () => {
+      closeTabMenu();
+      ungroupIsland(island.id);
+    };
+    menu.appendChild(ungroupBtn);
 
     document.body.appendChild(menu);
 
@@ -1441,8 +1898,9 @@
 
     order.forEach(i => {
       const it = items[i];
+      const isNote = it.type === "note";
       const li = document.createElement("li");
-      li.className = (it.pinned ? "pinned-row " : "");
+      li.className = (it.pinned ? "pinned-row " : "") + (isNote ? "note-row " : "");
       if (it._id && it._id === pendingEnterId) li.classList.add("entering");
 
       li.draggable = true;
@@ -1454,32 +1912,74 @@
       };
       li.ondragend = () => {
         li.classList.remove("dragging");
-        list.querySelectorAll(".drag-over-top, .drag-over-bottom")
-          .forEach(el => el.classList.remove("drag-over-top", "drag-over-bottom"));
+        list.querySelectorAll(".drag-over-top, .drag-over-bottom, .drag-over-route")
+          .forEach(el => el.classList.remove("drag-over-top", "drag-over-bottom", "drag-over-route"));
         draggedItemId = null;
       };
       li.ondragover = ev => {
         if (!draggedItemId || draggedItemId === it._id) return;
         ev.preventDefault();
         const rect = li.getBoundingClientRect();
-        const before = (ev.clientY - rect.top) < rect.height / 2;
-        li.classList.toggle("drag-over-top", before);
-        li.classList.toggle("drag-over-bottom", !before);
+        const pct = (ev.clientY - rect.top) / rect.height;
+        const draggedItem = items.find(x => x._id === draggedItemId);
+        // A dragged note over a task can either route (drop in the middle
+        // band) or just reorder (drop near an edge, like any other item).
+        if (!isNote && draggedItem && draggedItem.type === "note") {
+          li.classList.toggle("drag-over-top", pct < 0.25);
+          li.classList.toggle("drag-over-route", pct >= 0.25 && pct <= 0.75);
+          li.classList.toggle("drag-over-bottom", pct > 0.75);
+        } else {
+          li.classList.toggle("drag-over-top", pct < 0.5);
+          li.classList.toggle("drag-over-bottom", pct >= 0.5);
+          li.classList.remove("drag-over-route");
+        }
       };
-      li.ondragleave = () => li.classList.remove("drag-over-top", "drag-over-bottom");
+      li.ondragleave = () => li.classList.remove("drag-over-top", "drag-over-bottom", "drag-over-route");
       li.ondrop = ev => {
         ev.preventDefault();
-        li.classList.remove("drag-over-top", "drag-over-bottom");
+        ev.stopPropagation();
+        li.classList.remove("drag-over-top", "drag-over-bottom", "drag-over-route");
         if (!draggedItemId || draggedItemId === it._id) return;
         const rect = li.getBoundingClientRect();
-        const before = (ev.clientY - rect.top) < rect.height / 2;
-        reorderItem(draggedItemId, it._id, before);
+        const pct = (ev.clientY - rect.top) / rect.height;
+        const draggedItem = items.find(x => x._id === draggedItemId);
+        if (!isNote && draggedItem && draggedItem.type === "note" && pct >= 0.25 && pct <= 0.75) {
+          routeNoteOntoTask(draggedItemId, it._id);
+          return;
+        }
+        reorderItem(draggedItemId, it._id, pct < 0.5);
       };
 
       const dragHandle = document.createElement("div");
       dragHandle.className = "drag-handle";
       dragHandle.textContent = "⠿";
       dragHandle.title = "Drag to reorder";
+
+      const txtWrap = document.createElement("div");
+      txtWrap.className = "txt-wrap";
+
+      const txt = document.createElement("div");
+      txt.className = "txt";
+      txt.textContent = it.text;
+      txt.title = "Double-click to edit";
+      txt.ondblclick = () => edit(i, txt);
+      txtWrap.appendChild(txt);
+
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "×";
+      del.title = "Delete";
+      del.onclick = () => { items.splice(i, 1); save(); renderList(); };
+
+      if (isNote) {
+        actions.append(del);
+        li.append(dragHandle, txtWrap, actions);
+        list.appendChild(li);
+        return;
+      }
 
       const box = document.createElement("div");
       box.className = "box";
@@ -1500,16 +2000,6 @@
         }, { once: true });
       };
 
-      const txtWrap = document.createElement("div");
-      txtWrap.className = "txt-wrap";
-
-      const txt = document.createElement("div");
-      txt.className = "txt";
-      txt.textContent = it.text;
-      txt.title = "Double-click to edit";
-      txt.ondblclick = () => edit(i, txt);
-      txtWrap.appendChild(txt);
-
       if (it.due) {
         const overdue = isOverdue(it);
         const due = document.createElement("div");
@@ -1521,8 +2011,50 @@
         txtWrap.appendChild(due);
       }
 
-      const actions = document.createElement("div");
-      actions.className = "row-actions";
+      let noteIndicator = null;
+      if (it.note) {
+        let expanded = false;
+        noteIndicator = document.createElement("button");
+        noteIndicator.className = "note-indicator";
+
+        const attachedWrap = document.createElement("div");
+        txtWrap.appendChild(attachedWrap);
+
+        const updateIndicator = () => {
+          noteIndicator.textContent = expanded ? "▲" : "▾";
+          noteIndicator.title = expanded ? "Hide attached note" : "Show attached note";
+          noteIndicator.classList.toggle("expanded", expanded);
+        };
+
+        const renderAttachedNote = () => {
+          updateIndicator();
+          attachedWrap.innerHTML = "";
+          if (!expanded) return;
+          const attached = document.createElement("div");
+          attached.className = "note-attached";
+          attached.textContent = it.note;
+          attached.title = "Drag out to un-route this note";
+          attached.draggable = true;
+          attached.ondragstart = ev => {
+            ev.stopPropagation();
+            draggedAttachedFromId = it._id;
+            attached.classList.add("dragging");
+            ev.dataTransfer.effectAllowed = "move";
+            ev.dataTransfer.setData("text/plain", it._id);
+          };
+          attached.ondragend = () => {
+            attached.classList.remove("dragging");
+            draggedAttachedFromId = null;
+          };
+          attachedWrap.appendChild(attached);
+        };
+        noteIndicator.onclick = ev => {
+          ev.stopPropagation();
+          expanded = !expanded;
+          renderAttachedNote();
+        };
+        renderAttachedNote();
+      }
 
       const pinBtn = document.createElement("button");
       pinBtn.className = "pin-btn" + (it.pinned ? " pinned" : "");
@@ -1536,21 +2068,17 @@
       dueBtn.title = it.due ? "Change due date/time" : "Add due date/time";
       dueBtn.onclick = () => toggleDueEdit(i, txtWrap);
 
-      const del = document.createElement("button");
-      del.className = "del";
-      del.textContent = "×";
-      del.title = "Delete";
-      del.onclick = () => { items.splice(i, 1); save(); renderList(); };
-
+      if (noteIndicator) actions.append(noteIndicator);
       actions.append(pinBtn, dueBtn, del);
       li.append(dragHandle, box, txtWrap, actions);
       list.appendChild(li);
     });
     pendingEnterId = null;
 
-    const done = items.filter(x => x.done).length;
-    const left = items.length - done;
-    document.getElementById("count").textContent = items.length ? `${left} left` : "";
+    const taskItems = items.filter(x => x.type !== "note");
+    const done = taskItems.filter(x => x.done).length;
+    const left = taskItems.length - done;
+    document.getElementById("count").textContent = taskItems.length ? `${left} left` : "";
   }
 
   function renderCompletedList() {
@@ -2259,15 +2787,32 @@
     };
   }
 
+  // What the add-item form creates on submit. Defaults to "task" each
+  // session; toggled per-submission via addTypeToggle, not persisted.
+  let addItemType = "task";
+  const addTypeToggle = document.getElementById("addTypeToggle");
+  addTypeToggle.onclick = () => {
+    addItemType = addItemType === "task" ? "note" : "task";
+    const isNoteMode = addItemType === "note";
+    addTypeToggle.classList.toggle("note-mode", isNoteMode);
+    addTypeToggle.textContent = isNoteMode ? "📝" : "☑";
+    addTypeToggle.title = isNoteMode
+      ? "Adding a note — click to switch to a task"
+      : "Adding a task — click to switch to a note";
+    input.placeholder = isNoteMode ? "Add a note…" : "Add a task…";
+  };
+
   document.getElementById("form").onsubmit = e => {
     e.preventDefault();
     const v = input.value.trim();
     if (!v) return;
-    const newItem = {
-      _id: uid(), text: v, done: false, due: null, dueAllDay: false, notified: false,
-      pinned: false, repeat: null, repeatDays: null, repeatWeekday: null,
-      repeatOccurrence: null, completedAt: null,
-    };
+    const newItem = addItemType === "note"
+      ? { _id: uid(), type: "note", text: v }
+      : {
+        _id: uid(), type: "task", text: v, done: false, due: null, dueAllDay: false, notified: false,
+        pinned: false, repeat: null, repeatDays: null, repeatWeekday: null,
+        repeatOccurrence: null, completedAt: null, note: null,
+      };
     activeList().items.push(newItem);
     pendingEnterId = newItem._id;
     input.value = "";

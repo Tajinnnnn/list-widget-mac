@@ -222,6 +222,20 @@ def test_render_tasks_section_includes_list_with_sync_on():
     assert "### Tasks <!--id:list1-->" in section
 
 
+def test_render_tasks_section_excludes_note_items():
+    state = {
+        "lists": [
+            {"id": "list1", "name": "Tasks", "items": [
+                _item(),
+                {"_id": "n1", "type": "note", "text": "Bring cash"},
+            ]},
+        ]
+    }
+    section = vault_sync.render_tasks_section(state)
+    assert "- [ ] Get haircut <!--id:abc123-->" in section
+    assert "Bring cash" not in section
+
+
 def test_render_tasks_section_completed_today_rollup():
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     state = {
@@ -483,6 +497,25 @@ def test_merge_tombstone_newer_than_note_edit_stays_deleted():
     merged = vault_sync.merge(local, remote, note_mtime)
     assert merged["lists"][0]["items"] == []
     assert merged["tombstones"] == [{"_id": "a1", "updatedAt": tombstone_time}]
+
+
+def test_merge_does_not_tombstone_note_items_absent_from_remote():
+    # A note-typed item is never written to the note by render_tasks_section,
+    # so it can never appear in `remote` — merge must not read that absence
+    # as "deleted in the note" and tombstone it.
+    local = _local_state()
+    local["lists"][0]["items"].append({
+        "_id": "n1", "type": "note", "text": "Bring cash",
+        "updatedAt": "2026-07-14T10:00:00.000Z",
+    })
+    remote = _remote_list([
+        {"id": "a1", "text": "Existing task", "done": False, "due": None,
+         "pinned": False, "repeat": None},
+    ])
+    merged = vault_sync.merge(local, remote, _recent_iso())
+    note_ids = [it["_id"] for it in merged["lists"][0]["items"] if it.get("type") == "note"]
+    assert note_ids == ["n1"]
+    assert merged["tombstones"] == []
 
 
 def test_merge_leaves_sync_off_list_untouched_when_absent_from_remote():
