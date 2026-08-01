@@ -567,18 +567,57 @@
   .note-indicator.expanded { opacity: 1; color: var(--accent); }
   .note-indicator:hover { color: var(--accent); }
   .note-attached {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
     margin-top: 4px;
     padding: 6px 8px;
     background: var(--bg);
     border: 1px dashed var(--line);
     border-radius: 7px;
+  }
+  .note-attached.dragging { opacity: .35; }
+  .note-attached-text {
+    flex: 1;
+    min-width: 0;
     font-size: 12.5px;
     font-style: italic;
     color: var(--muted);
     white-space: pre-wrap;
+    word-break: break-word;
     cursor: grab;
   }
-  .note-attached.dragging { opacity: .35; }
+  .note-attached-edit {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    padding: 4px 6px;
+    resize: vertical;
+    min-height: 40px;
+  }
+  .note-attached-actions {
+    display: flex;
+    gap: 2px;
+    flex: none;
+  }
+  .note-attached-btn {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    flex: none;
+  }
+  .note-attached:hover .note-attached-btn { opacity: 1; }
+  .note-attached-btn:hover { color: var(--accent); }
+  .note-attached-btn.delete:hover { color: var(--danger); }
   .drag-handle {
     opacity: 0;
     color: var(--muted);
@@ -2030,23 +2069,77 @@
           updateIndicator();
           attachedWrap.innerHTML = "";
           if (!expanded) return;
+
           const attached = document.createElement("div");
           attached.className = "note-attached";
-          attached.textContent = it.note;
-          attached.title = "Drag out to un-route this note";
-          attached.draggable = true;
-          attached.ondragstart = ev => {
+
+          const text = document.createElement("div");
+          text.className = "note-attached-text";
+          text.textContent = it.note;
+          text.title = "Double-click to edit, or drag out to un-route";
+          text.draggable = true;
+          text.ondblclick = ev => { ev.stopPropagation(); editAttachedNote(); };
+          text.ondragstart = ev => {
             ev.stopPropagation();
             draggedAttachedFromId = it._id;
             attached.classList.add("dragging");
             ev.dataTransfer.effectAllowed = "move";
             ev.dataTransfer.setData("text/plain", it._id);
           };
-          attached.ondragend = () => {
+          text.ondragend = () => {
             attached.classList.remove("dragging");
             draggedAttachedFromId = null;
           };
+
+          const actionsRow = document.createElement("div");
+          actionsRow.className = "note-attached-actions";
+
+          const detachBtn = document.createElement("button");
+          detachBtn.className = "note-attached-btn";
+          detachBtn.textContent = "⇤";
+          detachBtn.title = "Detach into a standalone note";
+          detachBtn.onclick = ev => {
+            ev.stopPropagation();
+            items.push({ _id: uid(), type: "note", text: it.note });
+            it.note = null;
+            save(); renderList();
+          };
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "note-attached-btn delete";
+          deleteBtn.textContent = "×";
+          deleteBtn.title = "Delete this note";
+          deleteBtn.onclick = ev => {
+            ev.stopPropagation();
+            it.note = null;
+            save(); renderList();
+          };
+
+          actionsRow.append(detachBtn, deleteBtn);
+          attached.append(text, actionsRow);
           attachedWrap.appendChild(attached);
+        };
+
+        const editAttachedNote = () => {
+          const attached = attachedWrap.querySelector(".note-attached");
+          const textEl = attached.querySelector(".note-attached-text");
+          const textarea = document.createElement("textarea");
+          textarea.className = "note-attached-edit";
+          textarea.value = it.note;
+          textEl.replaceWith(textarea);
+          textarea.focus();
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+          const commit = () => {
+            const v = textarea.value.trim();
+            it.note = v || it.note;
+            save(); renderList();
+          };
+          textarea.onblur = commit;
+          textarea.onkeydown = e => {
+            if (e.key === "Escape") { textarea.onblur = null; renderList(); }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) textarea.blur();
+          };
+          textarea.onclick = ev => ev.stopPropagation();
         };
         noteIndicator.onclick = ev => {
           ev.stopPropagation();
