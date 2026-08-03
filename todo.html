@@ -298,6 +298,12 @@
     color: var(--muted);
     margin-top: 3px;
   }
+  .trash-meta {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+  li.trash-row { align-items: center; }
   .restore-btn {
     opacity: 0;
     background: none; border: none;
@@ -552,6 +558,18 @@
   li.drag-over-route { box-shadow: inset 0 0 0 2px var(--accent); background: var(--panel); }
   li.note-row .txt { font-style: italic; color: var(--muted); }
   li.note-row { border-left: 2px dashed var(--line); }
+  li.subtask-row { padding-left: 34px; }
+  .subtask-chevron {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 4px 2px 4px 0;
+    flex: none;
+    align-self: flex-start;
+  }
+  .subtask-chevron:hover { color: var(--accent); }
   .note-indicator {
     opacity: 0;
     background: none;
@@ -581,12 +599,15 @@
     flex: 1;
     min-width: 0;
     font-size: 12.5px;
-    font-style: italic;
-    color: var(--muted);
-    white-space: pre-wrap;
-    word-break: break-word;
+    color: var(--text);
     cursor: grab;
   }
+  .note-attached-line {
+    padding: 2px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .note-attached-line + .note-attached-line { border-top: 1px solid var(--line); }
   .note-attached-edit {
     flex: 1;
     min-width: 0;
@@ -777,6 +798,7 @@
     <button id="sortBtn" class="icon-btn" title="Sort">⇅</button>
     <button id="calendarBtn" class="icon-btn" title="Calendar">📅</button>
     <button id="archiveBtn" class="icon-btn" title="Completed tasks">🗂️</button>
+    <button id="trashBtn" class="icon-btn" title="Trash">🗑️</button>
     <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
   </header>
   <div class="tabs" id="tabs"></div>
@@ -864,6 +886,8 @@
       if (it.updatedAt === undefined) it.updatedAt = new Date().toISOString();
       if (it.type === undefined) it.type = "task";
       if (it.note === undefined) it.note = null;
+      if (it.parentId === undefined) it.parentId = null;
+      if (it.subtasksCollapsed === undefined) it.subtasksCollapsed = false;
       if (!it._id) it._id = uid();
     });
     return items || [];
@@ -896,6 +920,26 @@
     renderList();
   }
 
+  // Nests a task under another task (one level deep only). If the target
+  // is itself a subtask, the dragged task becomes a sibling under the
+  // target's parent instead of creating a second level of nesting.
+  function nestTaskUnderTask(draggedId, targetId) {
+    const items = activeList().items;
+    const dragged = items.find(x => x._id === draggedId);
+    const target = items.find(x => x._id === targetId);
+    if (!dragged || !target || dragged._id === target._id) return;
+    const newParentId = target.parentId || target._id;
+    // Dragging a task onto its own subtask would make it its own parent -
+    // a cycle. Guard against it rather than letting it corrupt the tree.
+    if (newParentId === dragged._id) return;
+    // A task can't both have subtasks of its own and be a subtask itself
+    // (one level max) - promote its existing children to top-level first.
+    items.forEach(x => { if (x.parentId === dragged._id) x.parentId = null; });
+    dragged.parentId = newParentId;
+    save();
+    renderList();
+  }
+
   // Moves a standalone note item's text onto a task's `note` field
   // (appending if the task already has one) and removes the note item.
   function routeNoteOntoTask(noteId, taskId) {
@@ -913,18 +957,31 @@
   // Dropping a dragged attached-note handle in open list space (not onto
   // another task, which stopPropagation's before this ever runs) un-routes
   // it back into a standalone note item.
-  list.ondragover = ev => { if (draggedAttachedFromId) ev.preventDefault(); };
+  list.ondragover = ev => { if (draggedAttachedFromId || draggedItemId) ev.preventDefault(); };
   list.ondrop = ev => {
     ev.preventDefault();
-    if (!draggedAttachedFromId) return;
-    const items = activeList().items;
-    const task = items.find(x => x._id === draggedAttachedFromId);
-    draggedAttachedFromId = null;
-    if (!task || !task.note) return;
-    items.push({ _id: uid(), type: "note", text: task.note });
-    task.note = null;
-    save();
-    renderList();
+    if (draggedAttachedFromId) {
+      const items = activeList().items;
+      const task = items.find(x => x._id === draggedAttachedFromId);
+      draggedAttachedFromId = null;
+      if (!task || !task.note) return;
+      items.push({ _id: uid(), type: "note", text: task.note });
+      task.note = null;
+      save();
+      renderList();
+      return;
+    }
+    // Dropping a dragged subtask in open list space (not onto another
+    // item, which stopPropagation's before this ever runs) promotes it
+    // back to a top-level task.
+    if (draggedItemId) {
+      const it = activeList().items.find(x => x._id === draggedItemId);
+      if (it && it.parentId) {
+        it.parentId = null;
+        save();
+        renderList();
+      }
+    }
   };
 
   // id of the list tab currently being drag-reordered.
@@ -981,6 +1038,45 @@
       }
     });
     state.lists = result;
+  }
+
+  // Rebuilds each list's items so every parent task is immediately
+  // followed by all of its subtasks (in their existing relative order),
+  // regardless of where the children currently sit in that list. Mirrors
+  // normalizeIslandContiguity(), but per-list and keyed by parent identity
+  // rather than a shared group id.
+  function normalizeSubtaskContiguity() {
+    state.lists.forEach(l => {
+      const items = l.items;
+      if (!items.some(it => it.parentId)) return;
+
+      const childrenByParent = new Map();
+      items.forEach(it => {
+        if (!it.parentId) return;
+        if (!childrenByParent.has(it.parentId)) childrenByParent.set(it.parentId, []);
+        childrenByParent.get(it.parentId).push(it);
+      });
+
+      const placed = new Set();
+      const result = [];
+      items.forEach(it => {
+        if (placed.has(it._id)) return;
+        if (it.parentId) {
+          // Orphaned subtask (its parent no longer exists) - keep it as a
+          // standalone entry rather than dropping it.
+          if (!items.some(x => x._id === it.parentId)) {
+            placed.add(it._id);
+            result.push(it);
+          }
+          return;
+        }
+        placed.add(it._id);
+        result.push(it);
+        const kids = childrenByParent.get(it._id);
+        if (kids) kids.forEach(k => { if (!placed.has(k._id)) { placed.add(k._id); result.push(k); } });
+      });
+      l.items = result;
+    });
   }
 
   // Dissolves an island once it has 1 or fewer members left, clearing
@@ -1139,8 +1235,10 @@
     if (!result.settings.retention) result.settings.retention = "endOfDay";
     if (result.settings.vibrancy === undefined) result.settings.vibrancy = false;
     if (!result.settings.calendarView) result.settings.calendarView = "day";
+    if (!result.settings.trashRetention) result.settings.trashRetention = "7d";
     if (!Array.isArray(result.tombstones)) result.tombstones = [];
     if (!Array.isArray(result.islands)) result.islands = [];
+    if (!Array.isArray(result.trash)) result.trash = [];
 
     // One-time migration: the default first-list name changed from
     // "To-Do" to "Tasks". Only touch it once, so a list intentionally
@@ -1155,6 +1253,7 @@
 
   function save() {
     normalizeIslandContiguity();
+    normalizeSubtaskContiguity();
     stampUpdatedAtAndTombstones();
     const json = JSON.stringify(state);
     localStorage.setItem(KEY, json);
@@ -1228,6 +1327,28 @@
     if (changed) save();
   }
 
+  // Pushes a deleted task/note/list into state.trash instead of discarding
+  // it outright. `payload` shape varies by kind — see design.md for
+  // add-trash-recovery: { item, subtasks } for "task", { item } or
+  // { taskId, text } for "note", { list } for "list".
+  function trashItem(kind, payload, listId, listName) {
+    state.trash.push({
+      _id: uid(), kind, deletedAt: new Date().toISOString(), listId, listName, payload,
+    });
+  }
+
+  const TRASH_RETENTION_DAYS = { "1d": 1, "3d": 3, "7d": 7, "30d": 30 };
+
+  function purgeExpiredTrash() {
+    const retention = state.settings.trashRetention;
+    if (retention === "never") return;
+    const days = TRASH_RETENTION_DAYS[retention] || 7;
+    const now = Date.now();
+    const before = state.trash.length;
+    state.trash = state.trash.filter(entry => now - new Date(entry.deletedAt).getTime() < days * 86400 * 1000);
+    if (state.trash.length !== before) save();
+  }
+
   function buildTabEl(l) {
     const tab = document.createElement("div");
     tab.className = "tab" + (l.id === state.active ? " active" : "");
@@ -1297,6 +1418,7 @@
         ev.stopPropagation();
         if (!confirm(`Delete the "${l.name}" list and all its tasks?`)) return;
         const islandId = l.islandId;
+        trashItem("list", { list: l }, l.id, l.name);
         state.lists = state.lists.filter(x2 => x2.id !== l.id);
         if (state.active === l.id) state.active = state.lists[0].id;
         if (islandId) dissolveIslandIfSingleton(islandId);
@@ -1621,6 +1743,7 @@
         closeTabMenu();
         if (!confirm(`Delete the "${l.name}" list and all its tasks?`)) return;
         const islandId = l.islandId;
+        trashItem("list", { list: l }, l.id, l.name);
         state.lists = state.lists.filter(x => x.id !== l.id);
         if (state.active === l.id) state.active = state.lists[0].id;
         if (islandId) dissolveIslandIfSingleton(islandId);
@@ -1755,6 +1878,66 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  // Splits a single outline line into its indent width (leading whitespace,
+  // tabs counted as 1 column) and its text, stripping a leading "-"/"*"/"•"
+  // bullet marker if present. Bullets aren't required — a plain indented
+  // line with no marker still parses fine.
+  function parseOutlineLine(rawLine) {
+    const leading = rawLine.match(/^[ \t]*/)[0];
+    const indent = leading.length;
+    const rest = rawLine.slice(indent).replace(/^[-*•]\s*/, "").trim();
+    return { indent, text: rest };
+  }
+
+  // Pasting a multi-line outline into the add-task box turns each top-level
+  // line into its own task; anything indented under it (any depth) is
+  // folded into that task's attached note, reusing the note feature rather
+  // than inventing real subtask nesting. This keeps a big pasted breakdown
+  // from turning into dozens of flat, context-free tasks.
+  function importOutlineText(rawText) {
+    const parsed = rawText.split(/\r?\n/).map(parseOutlineLine).filter(p => p.text);
+    if (!parsed.length) return;
+
+    const topIndent = parsed[0].indent;
+    const newItems = [];
+    let current = null;
+    let indentStack = [];
+
+    const finalizeCurrent = () => {
+      if (current && current.noteLines.length) current.item.note = current.noteLines.join("\n");
+    };
+
+    const startTask = text => {
+      finalizeCurrent();
+      const item = {
+        _id: uid(), type: "task", text, done: false, due: null, dueAllDay: false, notified: false,
+        pinned: false, repeat: null, repeatDays: null, repeatWeekday: null,
+        repeatOccurrence: null, completedAt: null, note: null,
+      };
+      newItems.push(item);
+      current = { item, noteLines: [] };
+      indentStack = [];
+    };
+
+    parsed.forEach(p => {
+      if (!current || p.indent <= topIndent) {
+        startTask(p.text);
+        return;
+      }
+      // Pop any levels at least as deep as this line, so re-dedenting back
+      // to a previously-seen depth reuses that depth instead of stacking
+      // forever — this is what keeps sibling bullets at the same indent.
+      while (indentStack.length && indentStack[indentStack.length - 1] >= p.indent) indentStack.pop();
+      indentStack.push(p.indent);
+      const depth = indentStack.length;
+      current.noteLines.push("  ".repeat(depth - 1) + "- " + p.text);
+    });
+    finalizeCurrent();
+
+    activeList().items.push(...newItems);
+    save(); renderTabs(); renderList();
   }
 
   function addLinesToList(l, text) {
@@ -1916,6 +2099,7 @@
     if (viewMode === "completed") renderCompletedList();
     else if (viewMode === "settings") renderSettingsView();
     else if (viewMode === "calendar") renderCalendarView();
+    else if (viewMode === "trash") renderTrashView();
     else renderActiveList();
   }
 
@@ -1927,9 +2111,22 @@
     // Completed items stay in the data (for counts / the completed view)
     // but are never rendered here again once done — they "leave" via the
     // animation in box.onclick, right before this function runs.
-    const order = items.map((_, i) => i)
-      .filter(i => !items[i].done)
-      .sort((a, b) => (items[b].pinned ? 1 : 0) - (items[a].pinned ? 1 : 0));
+    const notDoneIdx = items.map((_, i) => i).filter(i => !items[i].done);
+    const notDoneById = new Map(notDoneIdx.map(i => [items[i]._id, i]));
+    const pinFirst = (a, b) => (items[b].pinned ? 1 : 0) - (items[a].pinned ? 1 : 0);
+
+    // A subtask renders indented under its parent only if that parent is
+    // itself currently visible (not done/deleted) — otherwise it's an
+    // orphan for rendering purposes and surfaces as top-level instead of
+    // silently disappearing.
+    const isVisibleSubtask = i => items[i].parentId && notDoneById.has(items[i].parentId);
+
+    const order = [];
+    notDoneIdx.filter(i => !isVisibleSubtask(i)).sort(pinFirst).forEach(i => {
+      order.push(i);
+      if (items[i].subtasksCollapsed) return;
+      notDoneIdx.filter(j => items[j].parentId === items[i]._id).sort(pinFirst).forEach(j => order.push(j));
+    });
 
     if (!order.length) {
       list.innerHTML = '<div class="empty">Nothing here yet — add your first task above.</div>';
@@ -1938,8 +2135,10 @@
     order.forEach(i => {
       const it = items[i];
       const isNote = it.type === "note";
+      const isSubtask = isVisibleSubtask(i);
+      const hasSubtasks = !isNote && notDoneIdx.some(j => items[j].parentId === it._id);
       const li = document.createElement("li");
-      li.className = (it.pinned ? "pinned-row " : "") + (isNote ? "note-row " : "");
+      li.className = (it.pinned ? "pinned-row " : "") + (isNote ? "note-row " : "") + (isSubtask ? "subtask-row " : "");
       if (it._id && it._id === pendingEnterId) li.classList.add("entering");
 
       li.draggable = true;
@@ -1961,9 +2160,12 @@
         const rect = li.getBoundingClientRect();
         const pct = (ev.clientY - rect.top) / rect.height;
         const draggedItem = items.find(x => x._id === draggedItemId);
-        // A dragged note over a task can either route (drop in the middle
-        // band) or just reorder (drop near an edge, like any other item).
-        if (!isNote && draggedItem && draggedItem.type === "note") {
+        // A dragged note over a task routes (center band); a dragged task
+        // over another task nests it (center band). Either way, dropping
+        // near an edge is always a plain reorder instead.
+        const canRouteNote = !isNote && draggedItem && draggedItem.type === "note";
+        const canNestTask = !isNote && draggedItem && draggedItem.type === "task";
+        if (canRouteNote || canNestTask) {
           li.classList.toggle("drag-over-top", pct < 0.25);
           li.classList.toggle("drag-over-route", pct >= 0.25 && pct <= 0.75);
           li.classList.toggle("drag-over-bottom", pct > 0.75);
@@ -1982,8 +2184,13 @@
         const rect = li.getBoundingClientRect();
         const pct = (ev.clientY - rect.top) / rect.height;
         const draggedItem = items.find(x => x._id === draggedItemId);
-        if (!isNote && draggedItem && draggedItem.type === "note" && pct >= 0.25 && pct <= 0.75) {
+        const inCenterBand = pct >= 0.25 && pct <= 0.75;
+        if (!isNote && draggedItem && draggedItem.type === "note" && inCenterBand) {
           routeNoteOntoTask(draggedItemId, it._id);
+          return;
+        }
+        if (!isNote && draggedItem && draggedItem.type === "task" && inCenterBand) {
+          nestTaskUnderTask(draggedItemId, it._id);
           return;
         }
         reorderItem(draggedItemId, it._id, pct < 0.5);
@@ -1996,6 +2203,19 @@
 
       const txtWrap = document.createElement("div");
       txtWrap.className = "txt-wrap";
+
+      let chevron = null;
+      if (hasSubtasks) {
+        chevron = document.createElement("button");
+        chevron.className = "subtask-chevron";
+        chevron.textContent = it.subtasksCollapsed ? "▸" : "▾";
+        chevron.title = it.subtasksCollapsed ? "Show subtasks" : "Hide subtasks";
+        chevron.onclick = ev => {
+          ev.stopPropagation();
+          items[i].subtasksCollapsed = !items[i].subtasksCollapsed;
+          save(); renderList();
+        };
+      }
 
       const txt = document.createElement("div");
       txt.className = "txt";
@@ -2011,7 +2231,24 @@
       del.className = "del";
       del.textContent = "×";
       del.title = "Delete";
-      del.onclick = () => { items.splice(i, 1); save(); renderList(); };
+      del.onclick = () => {
+        if (it.type === "note") {
+          trashItem("note", { item: it }, al.id, al.name);
+          al.items = items.filter(x => x._id !== it._id);
+          save(); renderList();
+          return;
+        }
+        const childIdx = items.map((_, idx) => idx).filter(idx => items[idx].parentId === it._id);
+        if (childIdx.length) {
+          const n = childIdx.length;
+          if (!confirm(`Delete "${it.text}" and its ${n} subtask${n > 1 ? "s" : ""}?`)) return;
+        }
+        const subtasks = childIdx.map(idx => items[idx]);
+        const idsToRemove = new Set([it._id, ...subtasks.map(x => x._id)]);
+        trashItem("task", { item: it, subtasks }, al.id, al.name);
+        al.items = items.filter(x => !idsToRemove.has(x._id));
+        save(); renderList();
+      };
 
       if (isNote) {
         actions.append(del);
@@ -2075,7 +2312,12 @@
 
           const text = document.createElement("div");
           text.className = "note-attached-text";
-          text.textContent = it.note;
+          it.note.split("\n").forEach(lineText => {
+            const lineEl = document.createElement("div");
+            lineEl.className = "note-attached-line";
+            lineEl.textContent = lineText;
+            text.appendChild(lineEl);
+          });
           text.title = "Double-click to edit, or drag out to un-route";
           text.draggable = true;
           text.ondblclick = ev => { ev.stopPropagation(); editAttachedNote(); };
@@ -2111,6 +2353,7 @@
           deleteBtn.title = "Delete this note";
           deleteBtn.onclick = ev => {
             ev.stopPropagation();
+            trashItem("note", { taskId: it._id, text: it.note }, al.id, al.name);
             it.note = null;
             save(); renderList();
           };
@@ -2163,6 +2406,7 @@
 
       if (noteIndicator) actions.append(noteIndicator);
       actions.append(pinBtn, dueBtn, del);
+      if (chevron) li.append(chevron);
       li.append(dragHandle, box, txtWrap, actions);
       list.appendChild(li);
     });
@@ -2233,7 +2477,18 @@
       del.className = "del";
       del.textContent = "×";
       del.title = "Delete permanently";
-      del.onclick = () => { items.splice(i, 1); save(); renderList(); };
+      del.onclick = () => {
+        const childIdx = items.map((_, idx) => idx).filter(idx => items[idx].parentId === it._id);
+        if (childIdx.length) {
+          const n = childIdx.length;
+          if (!confirm(`Delete "${it.text}" and its ${n} subtask${n > 1 ? "s" : ""}?`)) return;
+        }
+        const subtasks = childIdx.map(idx => items[idx]);
+        const idsToRemove = new Set([it._id, ...subtasks.map(x => x._id)]);
+        trashItem("task", { item: it, subtasks }, al.id, al.name);
+        al.items = items.filter(x => !idsToRemove.has(x._id));
+        save(); renderList();
+      };
 
       actions.append(restoreBtn, del);
       li.append(box, txtWrap, actions);
@@ -2318,8 +2573,159 @@
 
     vibrancyRow.append(vibrancyHeader, vibrancyHint);
 
-    view.append(row, vibrancyRow);
+    const trashRow = document.createElement("div");
+    trashRow.className = "settings-row";
+
+    const trashLabel = document.createElement("label");
+    trashLabel.htmlFor = "trashRetentionSelect";
+    trashLabel.textContent = "Empty trash";
+
+    const trashSelect = document.createElement("select");
+    trashSelect.id = "trashRetentionSelect";
+    [
+      ["1d", "After 1 day"],
+      ["3d", "After 3 days"],
+      ["7d", "After 7 days"],
+      ["30d", "After 30 days"],
+      ["never", "Never (manual only)"],
+    ].forEach(([value, text]) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      if (state.settings.trashRetention === value) opt.selected = true;
+      trashSelect.appendChild(opt);
+    });
+    trashSelect.onchange = () => {
+      state.settings.trashRetention = trashSelect.value;
+      save();
+      purgeExpiredTrash();
+    };
+
+    const trashHint = document.createElement("div");
+    trashHint.className = "hint";
+    trashHint.textContent = "Deleted tasks, notes, and lists sit in Trash until this runs, then they're gone for good.";
+
+    trashRow.append(trashLabel, trashSelect, trashHint);
+
+    view.append(row, vibrancyRow, trashRow);
     list.appendChild(view);
+  }
+
+  function timeAgo(iso) {
+    const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (seconds < 60) return "just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
+
+  function trashEntryPreview(entry) {
+    const p = entry.payload;
+    if (entry.kind === "list") return `List: ${p.list.name} (${p.list.items.length} item${p.list.items.length === 1 ? "" : "s"})`;
+    if (entry.kind === "note" && p.item) return p.item.text;
+    if (entry.kind === "note") return p.text;
+    // kind "task"
+    return p.item.text + (p.subtasks.length ? ` (+${p.subtasks.length} subtask${p.subtasks.length > 1 ? "s" : ""})` : "");
+  }
+
+  // Finds the list a trash entry originally belonged to, falling back to
+  // the currently active list if that original list no longer exists —
+  // precise original position isn't preserved, just "put it somewhere
+  // visible" rather than losing it or reconstructing a whole list.
+  function trashTargetList(entry) {
+    return state.lists.find(l => l.id === entry.listId) || activeList();
+  }
+
+  function restoreTrashEntry(entryId) {
+    const entry = state.trash.find(e => e._id === entryId);
+    if (!entry) return;
+    const p = entry.payload;
+
+    if (entry.kind === "list") {
+      state.lists.push(p.list);
+    } else if (entry.kind === "task") {
+      const target = trashTargetList(entry);
+      target.items.push(p.item, ...p.subtasks);
+    } else if (entry.kind === "note" && p.item) {
+      const target = trashTargetList(entry);
+      target.items.push(p.item);
+    } else if (entry.kind === "note") {
+      // An attached note: reattach to its original task if it still
+      // exists anywhere; otherwise fall back to a standalone note item.
+      let task = null;
+      state.lists.forEach(l => { if (!task) task = l.items.find(it => it._id === p.taskId); });
+      if (task) {
+        task.note = task.note ? task.note + "\n" + p.text : p.text;
+      } else {
+        trashTargetList(entry).items.push({ _id: uid(), type: "note", text: p.text });
+      }
+    }
+
+    state.trash = state.trash.filter(e => e._id !== entryId);
+    save();
+    renderTabs();
+    renderList();
+  }
+
+  function deleteTrashEntryForever(entryId) {
+    state.trash = state.trash.filter(e => e._id !== entryId);
+    save();
+    renderList();
+  }
+
+  function renderTrashView() {
+    list.innerHTML = "";
+    document.getElementById("count").textContent = state.trash.length ? `${state.trash.length} in trash` : "";
+
+    if (!state.trash.length) {
+      list.innerHTML = '<div class="empty">Trash is empty.</div>';
+      return;
+    }
+
+    const order = state.trash.slice().sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+
+    order.forEach(entry => {
+      const li = document.createElement("li");
+      li.className = "trash-row";
+
+      const txtWrap = document.createElement("div");
+      txtWrap.className = "txt-wrap";
+
+      const txt = document.createElement("div");
+      txt.className = "txt";
+      txt.textContent = trashEntryPreview(entry);
+      txtWrap.appendChild(txt);
+
+      const meta = document.createElement("div");
+      meta.className = "trash-meta";
+      meta.textContent = (entry.listName ? `${entry.listName} · ` : "") + timeAgo(entry.deletedAt);
+      txtWrap.appendChild(meta);
+
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.className = "restore-btn";
+      restoreBtn.textContent = "↩";
+      restoreBtn.title = "Restore";
+      restoreBtn.onclick = () => restoreTrashEntry(entry._id);
+
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "×";
+      del.title = "Delete forever";
+      del.onclick = () => {
+        if (!confirm("Delete this forever? This can't be undone.")) return;
+        deleteTrashEntryForever(entry._id);
+      };
+
+      actions.append(restoreBtn, del);
+      li.append(txtWrap, actions);
+      list.appendChild(li);
+    });
   }
 
   function applyVibrancy(enabled) {
@@ -2895,6 +3301,18 @@
     input.placeholder = isNoteMode ? "Add a note…" : "Add a task…";
   };
 
+  // Pasting a single line into the add-task box behaves like normal typing.
+  // Pasting an outline (2+ non-blank lines) instead imports it via
+  // importOutlineText rather than dumping newlines into a single-line input.
+  input.addEventListener("paste", ev => {
+    const text = (ev.clipboardData || window.clipboardData).getData("text/plain");
+    if (!text) return;
+    const nonBlankLines = text.split(/\r?\n/).filter(l => l.trim()).length;
+    if (nonBlankLines < 2) return;
+    ev.preventDefault();
+    importOutlineText(text);
+  });
+
   document.getElementById("form").onsubmit = e => {
     e.preventDefault();
     const v = input.value.trim();
@@ -2918,6 +3336,7 @@
   const sortBtn = document.getElementById("sortBtn");
   const calendarBtn = document.getElementById("calendarBtn");
   const archiveBtn = document.getElementById("archiveBtn");
+  const trashBtn = document.getElementById("trashBtn");
   const settingsBtn = document.getElementById("settingsBtn");
   const tabsContainer = document.getElementById("tabs");
   const addForm = document.getElementById("form");
@@ -2928,6 +3347,7 @@
     calStyleBtn.hidden = viewMode !== "calendar";
     calendarBtn.classList.toggle("active", viewMode === "calendar");
     archiveBtn.classList.toggle("active", viewMode === "completed");
+    trashBtn.classList.toggle("active", viewMode === "trash");
     settingsBtn.classList.toggle("active", viewMode === "settings");
     addForm.hidden = viewMode !== "active";
     tabsContainer.hidden = viewMode !== "active";
@@ -2937,6 +3357,7 @@
   backBtn.onclick = () => setViewMode("active");
   calendarBtn.onclick = () => setViewMode("calendar");
   archiveBtn.onclick = () => setViewMode("completed");
+  trashBtn.onclick = () => setViewMode("trash");
   settingsBtn.onclick = () => setViewMode("settings");
 
   const CALENDAR_STYLES = [
@@ -3069,6 +3490,7 @@
 
   purgeExpiredCompleted();
   setInterval(purgeExpiredCompleted, 60 * 1000);
+  setInterval(purgeExpiredTrash, 60 * 1000);
 
   renderTabs();
   renderList();
