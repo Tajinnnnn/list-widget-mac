@@ -304,6 +304,23 @@
     margin-top: 3px;
   }
   li.trash-row { align-items: center; }
+  .trash-empty-row {
+    display: flex;
+    justify-content: flex-end;
+    padding: 4px 0 12px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 4px;
+  }
+  .trash-empty-btn {
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+  .trash-empty-btn:hover { border-color: var(--danger); }
   .restore-btn {
     opacity: 0;
     background: none; border: none;
@@ -2684,6 +2701,21 @@
       list.innerHTML = '<div class="empty">Trash is empty.</div>';
       return;
     }
+
+    const emptyRow = document.createElement("div");
+    emptyRow.className = "trash-empty-row";
+    const emptyBtn = document.createElement("button");
+    emptyBtn.className = "trash-empty-btn";
+    emptyBtn.textContent = "Empty trash";
+    emptyBtn.title = "Permanently delete everything in trash";
+    emptyBtn.onclick = () => {
+      const n = state.trash.length;
+      if (!confirm(`Permanently delete all ${n} item${n > 1 ? "s" : ""} in trash? This can't be undone.`)) return;
+      state.trash = [];
+      save(); renderList();
+    };
+    emptyRow.appendChild(emptyBtn);
+    list.appendChild(emptyRow);
 
     const order = state.trash.slice().sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
 
