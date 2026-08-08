@@ -1113,6 +1113,21 @@
     save(); renderTabs(); renderList();
   }
 
+  // Pushes an island's color onto every current member tab, so the tab
+  // strip stays in sync with whatever color the island was just set to
+  // (including clearing back to null/"None").
+  function syncIslandMemberColors(island) {
+    state.lists.forEach(l => { if (l.islandId === island.id) l.color = island.color; });
+  }
+
+  // Applied when a tab joins an island: if the island already has a
+  // color, the joining tab adopts it. A no-op for brand-new (colorless)
+  // islands, so first-time grouping doesn't strip existing tab colors.
+  function adoptIslandColor(list, islandId) {
+    const island = state.islands.find(x => x.id === islandId);
+    if (island && island.color) list.color = island.color;
+  }
+
   // Forms/joins an island when a tab is dropped onto another tab's center
   // zone. Whichever side already belongs to an island absorbs the other;
   // if neither does, a brand-new island is created containing both.
@@ -1134,6 +1149,7 @@
       target.islandId = islandId;
     }
     dragged.islandId = islandId;
+    adoptIslandColor(dragged, islandId);
 
     spliceListTo(draggedId, targetId, true);
     if (prevIslandId) dissolveIslandIfSingleton(prevIslandId);
@@ -1502,6 +1518,7 @@
       if (!dragged || dragged.islandId === island.id) return;
       const prevIslandId = dragged.islandId;
       dragged.islandId = island.id;
+      adoptIslandColor(dragged, island.id);
       spliceListTo(draggedListId, members[members.length - 1].id, false);
       if (prevIslandId) dissolveIslandIfSingleton(prevIslandId);
       save(); renderTabs(); renderList();
@@ -1581,6 +1598,7 @@
       if (!dragged || dragged.islandId === island.id) return;
       const prevIslandId = dragged.islandId;
       dragged.islandId = island.id;
+      adoptIslandColor(dragged, island.id);
       spliceListTo(draggedListId, members[members.length - 1].id, false);
       if (prevIslandId) dissolveIslandIfSingleton(prevIslandId);
       save(); renderTabs(); renderList();
@@ -1842,6 +1860,7 @@
     noneSwatch.style.background = "var(--muted)";
     noneSwatch.onclick = () => {
       island.color = null;
+      syncIslandMemberColors(island);
       save(); renderTabs();
       closeTabMenu();
     };
@@ -1853,6 +1872,7 @@
       swatch.style.background = color;
       swatch.onclick = () => {
         island.color = color;
+        syncIslandMemberColors(island);
         save(); renderTabs();
         closeTabMenu();
       };
@@ -1870,6 +1890,7 @@
     wheel.value = island.color && /^#[0-9a-f]{6}$/i.test(island.color) ? island.color : "#6ea8fe";
     wheel.onchange = () => {
       island.color = wheel.value;
+      syncIslandMemberColors(island);
       save(); renderTabs();
     };
     wheelLabel.appendChild(wheel);
