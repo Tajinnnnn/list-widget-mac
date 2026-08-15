@@ -1,8 +1,19 @@
 import json
 import os
+import threading
 
 import vault_sync
 from config import BACKUP_PATH
+
+# Guards the entire read-merge-write sequence around BACKUP_PATH so a UI
+# save (write_backup, called straight off a JS call) can never interleave
+# with a vault sync cycle (read_backup -> merge -> write_backup, in
+# sync_worker._run_vault_sync_cycle) — without this, a save landing between
+# the sync cycle's read and its write gets silently clobbered by the sync
+# cycle's write, which is still working off the pre-save snapshot. RLock,
+# not Lock, because _run_vault_sync_cycle holds this same lock while it
+# calls write_backup, which acquires it again internally.
+_backup_lock = threading.RLock()
 
 
 def write_backup(data):
@@ -14,13 +25,14 @@ def write_backup(data):
     # can never leave behind a corrupt/partial backup — worst case, the
     # previous good backup just doesn't get updated this time.
     try:
-        BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = BACKUP_PATH.with_suffix(".tmp")
-        with open(tmp_path, "w") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, BACKUP_PATH)
+        with _backup_lock:
+            BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = BACKUP_PATH.with_suffix(".tmp")
+            with open(tmp_path, "w") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, BACKUP_PATH)
     except Exception:
         pass
     try:
