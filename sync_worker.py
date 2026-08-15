@@ -5,6 +5,7 @@ import vault_sync
 import state
 from backup import _backup_lock, read_backup, write_backup
 from config import VAULT_SYNC_INTERVAL_SECONDS
+from periodic import run_periodic
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,4 @@ def _run_vault_sync_cycle():
 
 
 def vault_sync_loop():
-    state.window.events.loaded.wait(timeout=15)
-    _run_vault_sync_cycle()
-    while not state.stop_event.is_set():
-        if state.stop_event.wait(VAULT_SYNC_INTERVAL_SECONDS):
-            break
-        _run_vault_sync_cycle()
+    run_periodic(VAULT_SYNC_INTERVAL_SECONDS, _run_vault_sync_cycle, run_immediately=True)

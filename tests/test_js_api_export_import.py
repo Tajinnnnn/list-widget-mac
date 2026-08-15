@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import state
-from js_api import JsApi
+from js_api import JsApi, _first_path
 
 
 class _FakeWindow:
@@ -16,6 +16,23 @@ class _FakeWindow:
 
     def create_file_dialog(self, *_args, **_kwargs):
         return self.dialog_result
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        ("/tmp/list.txt",),
+        ["/tmp/list.txt"],
+        "/tmp/list.txt",
+    ],
+    ids=["tuple", "list", "bare-string"],
+)
+def test_first_path_normalizes_every_dialog_return_shape(result):
+    # pywebview's file-dialog result shape varies by backend (tuple, list,
+    # or a bare string) — every shape must resolve to the same path so
+    # export_list_text/import_list_text behave identically regardless of
+    # which shape the dialog happens to return.
+    assert _first_path(result) == "/tmp/list.txt"
 
 
 def test_export_list_text_success(tmp_path, monkeypatch):

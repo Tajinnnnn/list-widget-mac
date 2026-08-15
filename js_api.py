@@ -7,6 +7,13 @@ from backup import read_backup, write_backup
 from window_chrome import apply_vibrancy
 
 
+def _first_path(result):
+    # pywebview's file-dialog result shape varies by backend: sometimes a
+    # tuple/list of chosen paths, sometimes a bare string. Both
+    # export_list_text and import_list_text only ever want the first one.
+    return result[0] if isinstance(result, (list, tuple)) else result
+
+
 class JsApi:
     def set_vibrancy(self, enabled):
         apply_vibrancy(bool(enabled))
@@ -33,7 +40,7 @@ class JsApi:
         )
         if not result:
             return None
-        path = result[0] if isinstance(result, (list, tuple)) else result
+        path = _first_path(result)
         try:
             Path(path).write_text(text)
         except Exception:
@@ -52,7 +59,7 @@ class JsApi:
         )
         if not result:
             return None
-        path = result[0] if isinstance(result, (list, tuple)) else result
+        path = _first_path(result)
         try:
             return Path(path).read_text()
         except Exception:
