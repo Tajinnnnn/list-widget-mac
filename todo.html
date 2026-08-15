@@ -1159,6 +1159,58 @@
     renderList();
   }
 
+  // Moves tab `l` into an existing island `islandId`, via the tab's
+  // right-click "Move to" menu (as opposed to groupTabs' drag-and-drop
+  // path). Appends after that island's current last member so it doesn't
+  // land mid-group. Dissolves l's previous island if l was its last
+  // non-solo member.
+  function moveTabToIsland(l, islandId) {
+    if (l.islandId === islandId) return;
+    const island = state.islands.find(x => x.id === islandId);
+    if (!island) return;
+
+    const prevIslandId = l.islandId;
+    const members = state.lists.filter(x => x.islandId === islandId && x.id !== l.id);
+    const lastMember = members[members.length - 1];
+
+    l.islandId = islandId;
+    adoptIslandColor(l, islandId);
+    if (lastMember) spliceListTo(l.id, lastMember.id, false);
+    if (prevIslandId) dissolveIslandIfSingleton(prevIslandId);
+
+    save();
+    renderTabs();
+    renderList();
+  }
+
+  // Creates a brand-new island containing only `l`. Position in
+  // state.lists is left as-is — a solo island has no contiguity to
+  // maintain.
+  function moveTabToNewIsland(l) {
+    const islandId = uid();
+    state.islands.push({ id: islandId, name: nextIslandName(), color: null, collapsed: false });
+    const prevIslandId = l.islandId;
+    l.islandId = islandId;
+    if (prevIslandId) dissolveIslandIfSingleton(prevIslandId);
+
+    save();
+    renderTabs();
+    renderList();
+  }
+
+  // Pops `l` out of its island back to a standalone tab. No-op if it's
+  // not in one.
+  function removeTabFromIsland(l) {
+    const islandId = l.islandId;
+    if (!islandId) return;
+    l.islandId = null;
+    dissolveIslandIfSingleton(islandId);
+
+    save();
+    renderTabs();
+    renderList();
+  }
+
   // "active" shows open tasks; "completed" shows the current list's
   // finished tasks (still just a view over the same underlying data).
   let viewMode = "active";
@@ -1695,8 +1747,7 @@
       document.removeEventListener("click", tabMenuCloser);
       tabMenuCloser = null;
     }
-    const existing = document.querySelector(".tab-menu");
-    if (existing) existing.remove();
+    document.querySelectorAll(".tab-menu").forEach(el => el.remove());
   }
 
   function showTabMenu(l, tab, x, y) {
