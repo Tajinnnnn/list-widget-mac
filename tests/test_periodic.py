@@ -24,14 +24,14 @@ class _FakeEvents:
         self.loaded = _FakeLoadedEvent()
 
 
-class _FakeWindow:
+class _EventsWindow:
     def __init__(self):
         self.events = _FakeEvents()
 
 
 @pytest.fixture
 def fake_window(monkeypatch):
-    window = _FakeWindow()
+    window = _EventsWindow()
     monkeypatch.setattr(state, "window", window)
     return window
 

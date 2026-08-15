@@ -2,15 +2,13 @@ import json
 import threading
 import time
 
-import pytest
-
 import backup
 import state
 import sync_worker
 import vault_sync
 
 
-class _FakeWindow:
+class _EvaluateJsWindow:
     # sync_worker calls state.window.evaluate_js after the sync cycle
     # releases the lock; there's no real webview in this test, so this
     # just needs to exist and not blow up.
@@ -24,12 +22,12 @@ def test_concurrent_save_and_sync_cycle_no_data_loss(tmp_path, monkeypatch):
     # while a UI save lands in the middle of that window. Without the fix,
     # the sync cycle's write clobbers the save because it was computed from
     # a snapshot taken before the save happened. With the fix
-    # (_backup_lock held across the whole read-merge-write sequence in both
+    # (backup_lock held across the whole read-merge-write sequence in both
     # write_backup and _run_vault_sync_cycle), the two calls are fully
     # serialized, so the save can never be lost.
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr(backup, "BACKUP_PATH", backup_path)
-    monkeypatch.setattr(state, "window", _FakeWindow())
+    monkeypatch.setattr(state, "window", _EvaluateJsWindow())
     # sync_push/pull touch the real vault by default (VAULT_ROOT); no-op
     # push and fake-merge below keep this test entirely inside tmp_path.
     monkeypatch.setattr(vault_sync, "sync_push", lambda *a, **k: None)
@@ -41,7 +39,7 @@ def test_concurrent_save_and_sync_cycle_no_data_loss(tmp_path, monkeypatch):
 
     def fake_sync_pull_and_merge(local_state, vault_root=vault_sync.VAULT_ROOT):
         # Stands in for the real vault read/merge, which takes real wall
-        # time (file I/O, parsing). Blocking here — while _backup_lock is
+        # time (file I/O, parsing). Blocking here — while backup_lock is
         # still held by _run_vault_sync_cycle — is what widens the race
         # window that a concurrent save must survive.
         sync_started.set()
@@ -64,7 +62,7 @@ def test_concurrent_save_and_sync_cycle_no_data_loss(tmp_path, monkeypatch):
     save_thread.start()
 
     # Give the save thread a moment to reach (and, with the fix, block on)
-    # _backup_lock before letting the sync cycle's write proceed.
+    # backup_lock before letting the sync cycle's write proceed.
     time.sleep(0.2)
     allow_sync_to_finish.set()
 
@@ -81,12 +79,12 @@ def test_concurrent_save_and_sync_cycle_no_data_loss(tmp_path, monkeypatch):
 
 
 def test_write_backup_lock_is_reentrant(tmp_path, monkeypatch):
-    # _run_vault_sync_cycle holds _backup_lock and then calls write_backup,
+    # _run_vault_sync_cycle holds backup_lock and then calls write_backup,
     # which acquires the same lock again on the same thread. If this were
     # a plain threading.Lock instead of an RLock, that would deadlock.
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr(backup, "BACKUP_PATH", backup_path)
-    monkeypatch.setattr(state, "window", _FakeWindow())
+    monkeypatch.setattr(state, "window", _EvaluateJsWindow())
     monkeypatch.setattr(vault_sync, "sync_push", lambda *a, **k: None)
     monkeypatch.setattr(
         vault_sync,

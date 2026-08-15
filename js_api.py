@@ -20,8 +20,11 @@ class JsApi:
         return True
 
     def save_backup(self, data):
-        write_backup(data)
-        return True
+        # write_backup now reports whether the disk write actually landed
+        # (True/False) instead of always succeeding silently — pass that
+        # through honestly so the JS side's "did my save actually work"
+        # signal means what it says.
+        return write_backup(data)
 
     def load_backup(self):
         return read_backup()
