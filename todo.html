@@ -451,6 +451,7 @@
   .tab-menu-wheel::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
   .tab-menu-wheel::-webkit-color-swatch { border: none; border-radius: 50%; }
   .tab-menu-sep { border-top: 1px solid var(--line); margin: 4px 0; }
+  .tab-submenu { z-index: 11; }
   .tab-add {
     flex: none;
     width: 28px; height: 28px;
@@ -1750,6 +1751,81 @@
     document.querySelectorAll(".tab-menu").forEach(el => el.remove());
   }
 
+  function closeSubmenu() {
+    document.querySelectorAll(".tab-submenu").forEach(el => el.remove());
+  }
+
+  // Positions a flyout (the "Move to" submenu) beside its anchor button.
+  // Prefers opening to the right; flips to the left of the anchor if
+  // there isn't enough room, mirroring the viewport-edge clamping the
+  // main tab-menu already does for its own x/y.
+  function positionFlyout(el, anchorRect) {
+    document.body.appendChild(el);
+    const menuWidth = el.offsetWidth;
+    const menuHeight = el.offsetHeight;
+    const left = (anchorRect.right + 4 + menuWidth <= window.innerWidth - 8)
+      ? anchorRect.right + 4
+      : Math.max(8, anchorRect.left - menuWidth - 4);
+    const maxTop = window.innerHeight - menuHeight - 8;
+    el.style.left = left + "px";
+    el.style.top = Math.max(8, Math.min(anchorRect.top, maxTop)) + "px";
+  }
+
+  // Builds the "Move to" flyout for tab `l`: an optional "Remove from
+  // island" (only if l is currently in one), every other island, and an
+  // always-present "New island…" entry.
+  function buildMoveToSubmenu(l) {
+    const submenu = document.createElement("div");
+    submenu.className = "tab-menu tab-submenu";
+    submenu.onclick = ev => ev.stopPropagation();
+
+    const otherIslands = state.islands.filter(x => x.id !== l.islandId);
+
+    if (l.islandId) {
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "tab-menu-item";
+      removeBtn.textContent = "Remove from island";
+      removeBtn.onclick = () => {
+        closeTabMenu();
+        removeTabFromIsland(l);
+      };
+      submenu.appendChild(removeBtn);
+
+      if (otherIslands.length) {
+        submenu.appendChild(Object.assign(document.createElement("div"), { className: "tab-menu-sep" }));
+      }
+    }
+
+    otherIslands.forEach(island => {
+      const btn = document.createElement("button");
+      btn.className = "tab-menu-item";
+      btn.textContent = island.name;
+      btn.onclick = () => {
+        closeTabMenu();
+        moveTabToIsland(l, island.id);
+      };
+      submenu.appendChild(btn);
+    });
+
+    if (l.islandId || otherIslands.length) {
+      submenu.appendChild(Object.assign(document.createElement("div"), { className: "tab-menu-sep" }));
+    }
+
+    const newIslandBtn = document.createElement("button");
+    newIslandBtn.className = "tab-menu-item";
+    newIslandBtn.textContent = "New island…";
+    newIslandBtn.onclick = () => {
+      closeTabMenu();
+      moveTabToNewIsland(l);
+    };
+    submenu.appendChild(newIslandBtn);
+
+    return submenu;
+  }
+
+  let submenuOpenTimer = null;
+  let submenuCloseTimer = null;
+
   function showTabMenu(l, tab, x, y) {
     closeTabMenu();
 
@@ -1766,6 +1842,30 @@
       if (nameEl) renameTab(l, tab, nameEl, true);
     };
     menu.appendChild(renameBtn);
+
+    const moveToBtn = document.createElement("button");
+    moveToBtn.className = "tab-menu-item";
+    moveToBtn.textContent = "Move to ▸";
+
+    const scheduleSubmenuOpen = () => {
+      clearTimeout(submenuCloseTimer);
+      clearTimeout(submenuOpenTimer);
+      submenuOpenTimer = setTimeout(() => {
+        closeSubmenu();
+        const submenu = buildMoveToSubmenu(l);
+        positionFlyout(submenu, moveToBtn.getBoundingClientRect());
+        submenu.onmouseenter = () => clearTimeout(submenuCloseTimer);
+        submenu.onmouseleave = scheduleSubmenuClose;
+      }, 150);
+    };
+    const scheduleSubmenuClose = () => {
+      clearTimeout(submenuOpenTimer);
+      clearTimeout(submenuCloseTimer);
+      submenuCloseTimer = setTimeout(closeSubmenu, 200);
+    };
+    moveToBtn.onmouseenter = scheduleSubmenuOpen;
+    moveToBtn.onmouseleave = scheduleSubmenuClose;
+    menu.appendChild(moveToBtn);
 
     const exportBtn = document.createElement("button");
     exportBtn.className = "tab-menu-item";
