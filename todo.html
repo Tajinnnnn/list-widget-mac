@@ -2093,7 +2093,12 @@
     const text = l.items.map(it => it.text).join("\n") + "\n";
     const filename = sanitizeFilename(l.name);
     if (window.pywebview && window.pywebview.api && window.pywebview.api.export_list_text) {
-      window.pywebview.api.export_list_text(text, filename).catch(() => {});
+      // false means the write actually failed (permissions, full disk, etc.);
+      // null/undefined just means there was no window or the user cancelled
+      // the save dialog, which isn't an error worth interrupting them for.
+      window.pywebview.api.export_list_text(text, filename).then(ok => {
+        if (ok === false) alert("Couldn't export the list — the file wasn't saved.");
+      }).catch(() => alert("Couldn't export the list — the file wasn't saved."));
       return;
     }
     // Browser fallback — used when running outside the packaged app (e.g. dev/testing).
@@ -2183,9 +2188,16 @@
 
   function importTextIntoList(l) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.import_list_text) {
+      // false means the read actually failed (e.g. a non-text file picked
+      // via the "All files" filter); null/undefined just means there was no
+      // window or the user cancelled the open dialog — not an error.
       window.pywebview.api.import_list_text().then(text => {
-        if (text) addLinesToList(l, text);
-      }).catch(() => {});
+        if (text === false) {
+          alert("Couldn't import the file — it may not be a text file.");
+        } else if (text) {
+          addLinesToList(l, text);
+        }
+      }).catch(() => alert("Couldn't import the file — it may not be a text file."));
       return;
     }
     // Browser fallback — used when running outside the packaged app (e.g. dev/testing).
