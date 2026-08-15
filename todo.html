@@ -451,7 +451,7 @@
   .tab-menu-wheel::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
   .tab-menu-wheel::-webkit-color-swatch { border: none; border-radius: 50%; }
   .tab-menu-sep { border-top: 1px solid var(--line); margin: 4px 0; }
-  .tab-submenu { z-index: 11; }
+  .tab-submenu { width: 150px; z-index: 11; max-height: calc(100vh - 16px); overflow-y: auto; }
   .tab-add {
     flex: none;
     width: 28px; height: 28px;
@@ -1748,6 +1748,8 @@
       document.removeEventListener("click", tabMenuCloser);
       tabMenuCloser = null;
     }
+    clearTimeout(submenuOpenTimer);
+    clearTimeout(submenuCloseTimer);
     document.querySelectorAll(".tab-menu").forEach(el => el.remove());
   }
 
@@ -1756,18 +1758,28 @@
   }
 
   // Positions a flyout (the "Move to" submenu) beside its anchor button.
-  // Prefers opening to the right; flips to the left of the anchor if
-  // there isn't enough room, mirroring the viewport-edge clamping the
-  // main tab-menu already does for its own x/y.
+  // Prefers opening fully clear to the right, then fully clear to the
+  // left. In this app's narrow (360px min-300px) window, neither often
+  // fits alongside the 190px-wide parent menu — when that's the case,
+  // this overlaps the parent deliberately, offset far enough right that
+  // a sliver of it (starting from the "Move to" label) stays visible as
+  // a visual anchor, instead of landing exactly on top of it.
   function positionFlyout(el, anchorRect) {
     document.body.appendChild(el);
     const menuWidth = el.offsetWidth;
     const menuHeight = el.offsetHeight;
-    const left = (anchorRect.right + 4 + menuWidth <= window.innerWidth - 8)
-      ? anchorRect.right + 4
-      : Math.max(8, anchorRect.left - menuWidth - 4);
+    const fitsRight = anchorRect.right + 4 + menuWidth <= window.innerWidth - 8;
+    const fitsLeft = anchorRect.left - 4 - menuWidth >= 8;
+    let left;
+    if (fitsRight) {
+      left = anchorRect.right + 4;
+    } else if (fitsLeft) {
+      left = anchorRect.left - menuWidth - 4;
+    } else {
+      left = Math.min(anchorRect.left + 40, window.innerWidth - menuWidth - 8);
+    }
     const maxTop = window.innerHeight - menuHeight - 8;
-    el.style.left = left + "px";
+    el.style.left = Math.max(8, left) + "px";
     el.style.top = Math.max(8, Math.min(anchorRect.top, maxTop)) + "px";
   }
 
