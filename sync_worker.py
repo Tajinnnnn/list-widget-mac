@@ -1,9 +1,12 @@
 import json
+import logging
 
 import vault_sync
 import state
 from backup import _backup_lock, read_backup, write_backup
 from config import VAULT_SYNC_INTERVAL_SECONDS
+
+logger = logging.getLogger(__name__)
 
 
 def _run_vault_sync_cycle():
@@ -19,6 +22,11 @@ def _run_vault_sync_cycle():
         try:
             local_state = json.loads(local_raw)
         except Exception:
+            # A corrupt on-disk backup means the sync cycle has nothing
+            # trustworthy to merge against — worth a trace, since this is
+            # exactly the kind of thing that otherwise surfaces as "my
+            # tasks stopped syncing" with no clue why.
+            logger.exception("failed to parse local backup during sync cycle")
             return
         merged = vault_sync.sync_pull_and_merge(local_state)
         if merged is None:
@@ -26,6 +34,7 @@ def _run_vault_sync_cycle():
         try:
             write_backup(json.dumps(merged))
         except Exception:
+            logger.exception("write_backup failed during sync cycle")
             return
     # evaluate_js stays outside the lock — it's a UI call, not disk I/O,
     # and can block briefly on the main thread.

@@ -1,9 +1,16 @@
 import json
+import logging
 import os
 import threading
 
 import vault_sync
 from config import BACKUP_PATH
+
+# Module-level logger is safe to create before app.py's logging.basicConfig
+# runs (it will, since app.py imports this module before doing anything
+# else) — basicConfig configures the root handler, which every logger,
+# including ones created earlier, funnels into.
+logger = logging.getLogger(__name__)
 
 # Guards the entire read-merge-write sequence around BACKUP_PATH so a UI
 # save (write_backup, called straight off a JS call) can never interleave
@@ -34,11 +41,15 @@ def write_backup(data):
                 os.fsync(f.fileno())
             os.replace(tmp_path, BACKUP_PATH)
     except Exception:
-        pass
+        # This is the durability-critical path: if this fails silently, the
+        # user's data is only in WKWebView's localStorage (opaque, async —
+        # see the comment above) with no Python-owned fallback. Log it so a
+        # failure like a full disk or a permissions change leaves a trace.
+        logger.exception("write_backup failed")
     try:
         vault_sync.sync_push(json.loads(data))
     except Exception:
-        pass
+        logger.exception("sync_push failed")
 
 
 def read_backup():

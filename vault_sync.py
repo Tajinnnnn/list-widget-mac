@@ -1,4 +1,5 @@
 import copy
+import logging
 import os
 import random
 import re
@@ -8,6 +9,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 VAULT_ROOT = Path("/Users/tajin/Documents/Coding/Obsidian/Tajin Brain")
+
+# Created at import time; app.py's logging.basicConfig (which happens before
+# vault_sync is imported) configures the root handler this funnels into.
+logger = logging.getLogger(__name__)
 
 
 def today_note_path(vault_root: Path) -> Path:
@@ -422,7 +427,7 @@ def sync_push(state: dict, vault_root: Path = VAULT_ROOT) -> None:
     try:
         write_tasks_section(vault_root, state)
     except Exception:
-        pass
+        logger.exception("sync_push failed to write tasks section")
 
 
 def sync_pull_and_merge(local_state: dict, vault_root: Path = VAULT_ROOT) -> dict | None:
@@ -444,4 +449,9 @@ def sync_pull_and_merge(local_state: dict, vault_root: Path = VAULT_ROOT) -> dic
         write_tasks_section(vault_root, merged)
         return merged
     except Exception:
+        # merge() is the most complex function in this file; swallowing a
+        # bug in it here used to mean "silently returns None," with the
+        # caller unable to tell a real bug apart from "nothing to sync."
+        # Log the traceback so that's diagnosable instead of invisible.
+        logger.exception("sync_pull_and_merge failed")
         return None

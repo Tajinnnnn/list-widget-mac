@@ -1,3 +1,4 @@
+import logging
 import sys
 import threading
 
@@ -6,7 +7,7 @@ import webview
 from PyObjCTools import AppHelper
 
 import state
-from config import APP_TITLE, WINDOW_HEIGHT, WINDOW_WIDTH, resource_path
+from config import APP_TITLE, DEBUG_LOG_PATH, WINDOW_HEIGHT, WINDOW_WIDTH, resource_path
 from js_api import JsApi
 from notifications import notification_loop
 from single_instance import already_running
@@ -14,6 +15,22 @@ from sync_worker import vault_sync_loop
 from tray import setup_tray
 from window_chrome import clear_webkit_cache, configure_window_chrome
 from window_controls import on_closing
+
+# One logging setup for the whole app, configured before any other module's
+# durability-critical except blocks can run. Modules that need to log
+# (backup.py, vault_sync.py, sync_worker.py, window_chrome.py) just call
+# logging.getLogger(__name__) at import time — that's safe even though it
+# happens before this basicConfig runs (they're imported above), because
+# logging.basicConfig configures the root handler that all loggers funnel
+# into regardless of when each logger object was created. WARNING and above
+# only: this is for durability failures (silent data loss), not routine
+# tracing.
+DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=DEBUG_LOG_PATH,
+    level=logging.WARNING,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 def _reassert_accessory_policy(attempts_left=6):

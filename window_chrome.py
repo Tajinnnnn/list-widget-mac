@@ -1,9 +1,12 @@
+import logging
+
 import AppKit
 import WebKit
 from PyObjCTools import AppHelper
 
 import state
-from config import DEBUG_LOG_PATH
+
+logger = logging.getLogger(__name__)
 
 
 def clear_webkit_cache():
@@ -100,10 +103,13 @@ def configure_window_chrome():
             layer = content_view.layer()
             layer.setCornerRadius_(10.0)
             layer.setMasksToBounds_(True)
-        except Exception as e:
-            DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEBUG_LOG_PATH, "a") as f:
-                f.write(f"EXCEPTION: {e!r}\n")
+        except Exception:
+            # Was a raw open()/write() straight to DEBUG_LOG_PATH (predating
+            # the standardized logging setup in app.py) — now routed through
+            # the same logger everything else durability-critical uses, so
+            # this and the rest of the app's warnings land in one file in
+            # one format instead of two different ones interleaved.
+            logger.exception("configure_window_chrome failed")
 
     AppHelper.callAfter(_apply)
 
