@@ -1,0 +1,6 @@
+# Vercel falls back to .gitignore when this file is absent, which would
+# exclude exactly the generated files the deploy needs. This file exists to
+# override that. Keep it, even though it looks near-empty.
+.vercel/
+*.pyc
+__pycache__/
