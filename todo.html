@@ -1,6 +1,15 @@
 <meta charset="utf-8">
 <title>List</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- PWA metadata. Inert under the Mac shell (WKWebView ignores the
+     manifest and has no service worker), so these live here rather than
+     being injected into a generated copy at build time. -->
+<meta name="theme-color" content="#16181d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="List">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
   :root {
     --bg: #16181d;
@@ -94,6 +103,36 @@
   @media (prefers-color-scheme: light) {
     .settings-row select { color-scheme: light; }
   }
+  .settings-row input[type="password"],
+  .settings-row input[type="text"] {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 10px;
+    outline: none;
+  }
+  .settings-row input[type="password"]:focus,
+  .settings-row input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+  .settings-row .settings-btn {
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 8px 10px;
+    cursor: pointer;
+    /* Comfortably past the 44px touch minimum once padding is counted;
+       this row is primarily used on a phone. */
+    min-height: 36px;
+  }
+  .settings-row .settings-btn:hover { background: var(--line); }
   .settings-switch-row {
     display: flex;
     align-items: center;
@@ -839,6 +878,219 @@
     "#69db7c", "#38d9a9", "#66d9e8", "#b197fc", "#f783ac",
   ];
 
+  // ---- Platform seam --------------------------------------------------
+  //
+  // The same todo.html runs under two hosts: the Mac shell (pywebview,
+  // loaded over file://) and the installed PWA (served over https). Only
+  // persistence differs, so it is the only thing behind this seam — the
+  // list logic below never learns which host it got.
+  //
+  // The host is decided by protocol, NOT by probing window.pywebview:
+  // pywebview injects its bridge asynchronously, so at this point in the
+  // script it is legitimately absent on the Mac too. app.py loads this
+  // file via an explicit file:// URL, which makes the check reliable.
+  const IS_WEB = location.protocol === "http:" || location.protocol === "https:";
+
+  const SYNC = (() => {
+    const SECRET_KEY = "todo.sync.secret.v1";
+    const ENDPOINT = "/api/state";
+    const PUSH_DEBOUNCE_MS = 1500;
+    const POLL_MS = 30000;
+
+    let secret = null;
+    try { secret = localStorage.getItem(SECRET_KEY); } catch {}
+
+    let pushTimer = null;
+    let inFlight = false;
+    let deferred = null;   // pulled while the user was mid-edit
+    let loopsRunning = false;
+    let lastSyncAt = null;
+    let lastError = null;
+    const listeners = new Set();
+
+    function notify() { listeners.forEach(fn => { try { fn(); } catch {} }); }
+
+    function configured() { return IS_WEB && !!secret; }
+
+    function setSecret(value) {
+      secret = value || null;
+      try {
+        if (secret) localStorage.setItem(SECRET_KEY, secret);
+        else localStorage.removeItem(SECRET_KEY);
+      } catch {}
+    }
+
+    async function request(method, payload) {
+      const res = await fetch(ENDPOINT, {
+        method,
+        headers: {
+          "content-type": "application/json",
+          "authorization": "Bearer " + secret,
+        },
+        body: payload ? JSON.stringify(payload) : undefined,
+        cache: "no-store",
+      });
+      if (res.status === 401) {
+        // Clear it rather than retrying forever with a key the server has
+        // rejected. The Settings row then shows "not connected" again
+        // instead of failing invisibly.
+        setSecret(null);
+        throw new Error("wrong sync key");
+      }
+      if (!res.ok) throw new Error("sync " + method + " failed: " + res.status);
+      return res.json();
+    }
+
+    // A background pull must never overwrite something being typed. Hold
+    // it and apply on the next focusout instead.
+    function isEditing() {
+      const el = document.activeElement;
+      if (!el || el === document.body) return false;
+      return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+    }
+
+    function deliver(doc) {
+      if (!doc) return;
+      if (isEditing()) { deferred = doc; return; }
+      deferred = null;
+      adoptRemoteState(doc);
+    }
+
+    document.addEventListener("focusout", () => {
+      // Deferred to the next tick: focusout fires before focus lands on
+      // whatever is next, so activeElement is still stale right now.
+      setTimeout(() => { if (deferred && !isEditing()) deliver(deferred); }, 0);
+    });
+
+    async function pull() {
+      if (!configured() || inFlight) return;
+      inFlight = true;
+      try {
+        const { doc } = await request("GET");
+        if (doc) deliver(doc);
+        else await pushNow();   // empty server: seed it from this device
+        lastSyncAt = Date.now();
+        lastError = null;
+      } catch (err) {
+        lastError = err.message;
+        console.warn("sync pull:", err.message);
+      } finally {
+        inFlight = false;
+        notify();
+      }
+    }
+
+    async function pushNow() {
+      if (!configured()) return;
+      try {
+        // The response is the MERGED document, not what was sent, so it
+        // carries whatever the other device contributed. Adopting it here
+        // is what makes a push double as a pull.
+        const { doc } = await request("POST", { doc: state });
+        if (doc) deliver(doc);
+        lastSyncAt = Date.now();
+        lastError = null;
+      } catch (err) {
+        // Offline is normal: localStorage still holds the edit and the
+        // next poll or focus will retry. Recorded rather than swallowed so
+        // Settings can say so instead of looking connected.
+        lastError = err.message;
+        console.warn("sync push:", err.message);
+      } finally {
+        notify();
+      }
+    }
+
+    function schedulePush() {
+      if (!configured()) return;
+      clearTimeout(pushTimer);
+      pushTimer = setTimeout(pushNow, PUSH_DEBOUNCE_MS);
+    }
+
+    function flush() {
+      clearTimeout(pushTimer);
+      return pushNow();
+    }
+
+    // Deliberately NOT prompt(): embedded webviews suppress it, which made
+    // sync fail completely silently — no key stored, no error, no clue.
+    // The key is entered in Settings instead, and status is visible there.
+    function beginLoops() {
+      if (loopsRunning || !configured()) return;
+      loopsRunning = true;
+
+      pull();
+      setInterval(pull, POLL_MS);
+      // Checking something off on the phone and walking to the desk should
+      // just be right — a pull on focus is what makes that true.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") pull();
+      });
+      window.addEventListener("online", pull);
+      // Best-effort flush of a pending debounce on the way out.
+      window.addEventListener("pagehide", () => { if (pushTimer) flush(); });
+    }
+
+    function start() {
+      if (!IS_WEB) return;
+      beginLoops();   // no-op until a key has been entered
+    }
+
+    function connect(value) {
+      const trimmed = (value || "").trim();
+      if (!trimmed) return false;
+      setSecret(trimmed);
+      lastError = null;
+      beginLoops();
+      // Already-running loops won't re-pull on their own after a key
+      // change, so kick one off explicitly.
+      pull();
+      notify();
+      return true;
+    }
+
+    function disconnect() {
+      setSecret(null);
+      lastSyncAt = null;
+      lastError = null;
+      notify();
+    }
+
+    function status() {
+      return {
+        supported: IS_WEB,
+        configured: configured(),
+        lastSyncAt,
+        lastError,
+      };
+    }
+
+    function onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
+
+    return {
+      start, pull, schedulePush, flush, configured,
+      connect, disconnect, status, onChange,
+    };
+  })();
+
+  const Platform = IS_WEB ? {
+    saveState(json) { SYNC.schedulePush(); },
+    setVibrancy(enabled) { /* NSVisualEffectView is Mac-only */ },
+    canVibrancy: false,
+  } : {
+    saveState(json) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.save_backup) {
+        window.pywebview.api.save_backup(json).catch(() => {});
+      }
+    },
+    setVibrancy(enabled) {
+      if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.set_vibrancy(!!enabled);
+      }
+    },
+    canVibrancy: true,
+  };
+
   let state = load();
 
   const TRACKED_ITEM_FIELDS = ["text", "done", "due", "dueAllDay", "pinned", "repeat", "repeatDays", "repeatWeekday", "repeatOccurrence"];
@@ -1344,13 +1596,12 @@
     stampUpdatedAtAndTombstones();
     const json = JSON.stringify(state);
     localStorage.setItem(KEY, json);
-    // Belt-and-suspenders backup: written to a plain file with an
-    // explicit fsync on the Python side, independent of whatever
+    // On the Mac: a belt-and-suspenders backup written to a plain file
+    // with an explicit fsync on the Python side, independent of whatever
     // WebKit's own (opaque, asynchronous) localStorage persistence is
-    // doing. Fire-and-forget — don't block saves on it.
-    if (window.pywebview && window.pywebview.api && window.pywebview.api.save_backup) {
-      window.pywebview.api.save_backup(json).catch(() => {});
-    }
+    // doing. On the web: a debounced push to the sync server. Either way
+    // fire-and-forget — don't block saves on it.
+    Platform.saveState(json);
   }
 
   function countAllItems(s) {
@@ -1380,6 +1631,50 @@
         renderList();
       }
     }).catch(() => {});
+  }
+
+  // Replace local state with a document that came from the sync server.
+  //
+  // Deliberately does NOT call save(): save() stamps updatedAt and pushes,
+  // and a document we just received needs neither. It persists to
+  // localStorage directly instead, so an offline relaunch still has it.
+  function adoptRemoteState(doc) {
+    if (!doc || !Array.isArray(doc.lists) || !doc.lists.length) return;
+
+    const previousActive = state && state.active;
+    state = doc;
+    state.lists.forEach(l => {
+      normalizeItems(l.items);
+      if (l.color === undefined) l.color = null;
+      if (l.syncToVault === undefined) l.syncToVault = true;
+      if (l.islandId === undefined) l.islandId = null;
+    });
+    if (!state.settings) state.settings = {};
+    if (!state.settings.retention) state.settings.retention = "endOfDay";
+    if (!state.settings.calendarView) state.settings.calendarView = "day";
+    if (!state.settings.trashRetention) state.settings.trashRetention = "7d";
+    if (!Array.isArray(state.tombstones)) state.tombstones = [];
+    if (!Array.isArray(state.islands)) state.islands = [];
+    if (!Array.isArray(state.trash)) state.trash = [];
+
+    // `active` is per-device view state and the server never merges it,
+    // but a document round-tripped through another client can still carry
+    // that client's value. Keep whichever tab this device was on, as long
+    // as it still exists.
+    if (previousActive && state.lists.some(l => l.id === previousActive)) {
+      state.active = previousActive;
+    } else if (!state.lists.some(l => l.id === state.active)) {
+      state.active = state.lists[0].id;
+    }
+
+    // Re-baseline the change tracker to the adopted document, so the next
+    // save() only stamps what the user actually changes afterwards rather
+    // than re-stamping everything that arrived.
+    lastItemFields = snapshotItemFields(state);
+
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {}
+    renderTabs();
+    renderList();
   }
 
   function activeList() {
@@ -2847,7 +3142,14 @@
 
     trashRow.append(trashLabel, trashSelect, trashHint);
 
-    view.append(row, vibrancyRow, trashRow);
+    // The translucent look is an NSVisualEffectView behind the webview —
+    // Mac shell only. Omit the control on the web rather than leaving a
+    // switch that silently does nothing.
+    if (Platform.canVibrancy) {
+      view.append(row, vibrancyRow, trashRow);
+    } else {
+      view.append(row, trashRow, buildSyncRow());
+    }
     list.appendChild(view);
   }
 
@@ -2983,11 +3285,84 @@
     });
   }
 
+  // Sync configuration, web/PWA only. This exists because prompt() is
+  // suppressed in embedded webviews: without a real control, an unset key
+  // meant sync did nothing at all and said nothing about it.
+  function buildSyncRow() {
+    const wrap = document.createElement("div");
+    wrap.className = "settings-row";
+
+    const header = document.createElement("div");
+    header.className = "settings-switch-row";
+    const label = document.createElement("label");
+    label.htmlFor = "syncKey";
+    label.textContent = "Device sync";
+    header.append(label);
+
+    const input = document.createElement("input");
+    input.type = "password";
+    input.id = "syncKey";
+    input.placeholder = "Sync key";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+
+    const button = document.createElement("button");
+    button.className = "settings-btn";
+    button.type = "button";
+
+    const hint = document.createElement("div");
+    hint.className = "hint";
+
+    function refresh() {
+      const s = SYNC.status();
+      button.textContent = s.configured ? "Disconnect" : "Connect";
+      input.style.display = s.configured ? "none" : "";
+      if (!s.configured) {
+        hint.textContent = s.lastError
+          ? "Not connected — " + s.lastError
+          : "Enter this device's sync key to share lists across devices.";
+      } else if (s.lastError) {
+        hint.textContent = "Connected, but the last sync failed — " + s.lastError;
+      } else if (s.lastSyncAt) {
+        hint.textContent = "Synced " + relativeTime(s.lastSyncAt) + ".";
+      } else {
+        hint.textContent = "Connected. Waiting for the first sync\u2026";
+      }
+    }
+
+    button.onclick = () => {
+      if (SYNC.status().configured) {
+        SYNC.disconnect();
+      } else if (!SYNC.connect(input.value)) {
+        hint.textContent = "Enter a sync key first.";
+        return;
+      }
+      input.value = "";
+      refresh();
+    };
+
+    input.onkeydown = ev => { if (ev.key === "Enter") button.onclick(); };
+
+    // Keeps the "Synced 4s ago" line honest while Settings is open.
+    const unsubscribe = SYNC.onChange(refresh);
+    wrap.addEventListener("DOMNodeRemovedFromDocument", unsubscribe);
+
+    refresh();
+    wrap.append(header, input, button, hint);
+    return wrap;
+  }
+
+  function relativeTime(ts) {
+    const secs = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (secs < 60) return secs + "s ago";
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return mins + "m ago";
+    return Math.round(mins / 60) + "h ago";
+  }
+
   function applyVibrancy(enabled) {
     document.body.classList.toggle("vibrancy", !!enabled);
-    if (window.pywebview && window.pywebview.api) {
-      window.pywebview.api.set_vibrancy(!!enabled);
-    }
+    Platform.setVibrancy(enabled);
   }
 
   // ---- Calendar view (day / agenda / month, picked in Settings) ----
@@ -3768,11 +4143,25 @@
   // Same "poll until the bridge exists" approach as vibrancy above —
   // check the Python-side backup once the API is ready, and recover
   // from it if it turns out to have more tasks than localStorage did.
-  (function checkBackupWhenReady() {
-    if (window.pywebview && window.pywebview.api) {
-      recoverFromBackupIfNewer();
-    } else {
-      setTimeout(checkBackupWhenReady, 200);
+  // Mac only: on the web the server is authoritative, and SYNC.pull()
+  // below covers the same "localStorage lost data" case properly.
+  if (!IS_WEB) {
+    (function checkBackupWhenReady() {
+      if (window.pywebview && window.pywebview.api) {
+        recoverFromBackupIfNewer();
+      } else {
+        setTimeout(checkBackupWhenReady, 200);
+      }
+    })();
+  } else {
+    if ("serviceWorker" in navigator) {
+      // After load, so registration never competes with first paint.
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch(err => {
+          console.warn("service worker registration failed:", err.message);
+        });
+      });
     }
-  })();
+    SYNC.start();
+  }
 </script>
