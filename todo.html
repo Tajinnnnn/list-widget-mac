@@ -133,6 +133,25 @@
     min-height: 36px;
   }
   .settings-row .settings-btn:hover { background: var(--line); }
+  /* Web/PWA only. The Mac shell's header carries a 72px left indent that
+     exists purely to clear the traffic-light buttons floating over the
+     transparent titlebar; on the web there are no traffic lights, so that
+     indent is dead space that pushes the whole icon row off-centre.
+     env(safe-area-inset-*) resolves to 0 where there is no notch, and
+     max() keeps the existing padding as the floor, so these are safe
+     everywhere they apply. */
+  body.web header {
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-left: max(20px, env(safe-area-inset-left));
+  }
+  body.web .add {
+    /* Clears the home indicator, which otherwise sits on top of the
+       add-task row in an installed PWA. */
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-left: max(20px, env(safe-area-inset-left));
+  }
   /* iOS pops a selection callout on long-press, which collides with the
      lift gesture in installTouchDragShim. Only applied on touch input, so
      the Mac keeps normal text selection. */
@@ -4326,6 +4345,10 @@
       }
     })();
   } else {
+    // Drives the web-only layout rules (no traffic-light indent, safe-area
+    // insets). Separate from touch-input: a desktop browser needs these
+    // too, but must not get the touch shim.
+    document.body.classList.add("web");
     // Touch-primary only: on a desktop browser the real drag events work
     // and the shim would just fight them.
     if (window.matchMedia && matchMedia("(pointer: coarse)").matches) {

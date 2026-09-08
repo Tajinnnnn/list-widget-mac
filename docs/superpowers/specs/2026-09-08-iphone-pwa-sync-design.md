@@ -242,20 +242,31 @@ read-modify-write cycles can still lose an update if neither sees the other's wr
 
 ## Part 5: Responsive layout
 
-All four `@media` queries in `todo.html` are `prefers-color-scheme: light`. There are
-**zero width breakpoints** — this is greenfield responsive work, and along with Part 6 it is
-the bulk of the effort.
+**This section originally overestimated the work. Corrected after measuring at 375px
+rather than reading the stylesheet.**
 
-- `width: 460px` (line 44) -> `width: 100%; max-width: 460px`
-- A single `max-width: 480px` breakpoint covering the header icon row, the tab strip
-  (horizontal scroll already exists from the island work), and the fixed widths at lines
-  390, 454, and 739
-- Calendar defaults to the **agenda** layout on narrow screens; the hour-grid day view
-  remains reachable but is not the default
-- Touch targets to a 44px minimum
-- Traffic-light clearance in the window chrome is suppressed on web (there is no titlebar)
-- The explicit hour/minute/AM-PM due-time fields already work well on touch and are
-  unchanged
+`.app` is already `width: 100%; max-width: 460px` — there is no fixed body width to
+convert. The earlier estimate came from a grep for `width: *[0-9]{3,}px`, which was
+matching the tail of `max-width: 460px`. Measured at a 375px viewport:
+
+- No horizontal overflow anywhere — `document.scrollWidth == 375`
+- The calendar day view's hour grid renders cleanly, so the planned "default to agenda on
+  narrow screens" is **unnecessary**
+- The only true fixed widths left are the two context menus (190px and 150px), both of
+  which fit inside 375px
+
+What actually needed doing:
+
+- **The header's 72px left padding.** It exists solely to clear the macOS traffic lights
+  floating over the transparent titlebar. On the web there are none, so it was dead space
+  pushing the whole icon row off-centre. Overridden under a `body.web` class.
+- **Safe-area insets.** `viewport-fit=cover` is set, so the add-task row would otherwise
+  sit underneath the home indicator. `header` and `.add` take
+  `max(<existing>, env(safe-area-inset-*))`, keeping the existing padding as the floor.
+  Horizontal insets are deliberately *not* applied: the manifest pins `orientation:
+  portrait`, so they are always zero in practice, and a `max(0px, …)` floor clobbered
+  `.tabs`' real 14px padding when tried.
+- The explicit hour/minute/AM-PM due-time fields already work well on touch, unchanged.
 
 ## Part 6: Touch reorder
 
@@ -268,14 +279,32 @@ Safari**. Not degraded — inert. All three are rebuilt on Pointer Events behind
 2. **Task row reorder** — `todo.html:2384` (`draggedItemId`)
 3. **Attached-note drag-out to un-route** — `todo.html:2562` (`draggedAttachedFromId`)
 
-`makeReorderable()` lifts immediately on mouse and after a 350ms long-press on touch,
-tracks with `setPointerCapture`, and reuses the edge auto-scroll logic from the tab-strip
-work in `2026-08-25-island-drag-reorder-design.md`.
+**Superseded: a shim, not a rewrite.** Enumerating the actual call sites found **eight**
+drop targets, not three (task rows, tabs, the tabs strip itself, the island wrap, the
+island pill, the list container, and the attached-note paths), plus **three**
+`oncontextmenu` handlers. `oncontextmenu` has no touch equivalent at all, which meant tab
+rename and tab colour were simply unreachable on a phone — a parity gap the original plan
+had missed entirely.
 
-**Site 3 needs a new affordance, not a port.** Dragging a note *out* of a task has no
-natural touch equivalent. It becomes a long-press context menu with an "Un-route" item —
-the same interaction pattern as the existing right-click tab menu, so it does not feel
-bolted on. The mouse drag-out gesture is retained on Mac.
+Rewriting eight drop targets on Pointer Events would have put the working Mac behaviour at
+risk for no gain. Instead a shim synthesizes the same events from touch, with a stand-in
+`dataTransfer`, so every existing handler keeps working untouched — including any the
+enumeration still missed. It installs only when `IS_WEB` and `(pointer: coarse)`, so the
+Mac path and desktop browsers are unaffected.
+
+The gesture mirrors iOS itself: **long-press lifts, then a move becomes a drag and a
+release becomes the context menu.** That resolves the conflict between the two, since a tab
+is both draggable and right-clickable and one gesture had to serve both.
+
+- Moving before the 350ms lift stands the shim down entirely, so scrolling a long list
+  still works. Only once armed does it `preventDefault`, which is why `touchmove` is
+  registered non-passive.
+- `dragover`'s `preventDefault` is HTML5's "I accept this drop" and is what the existing
+  handlers already signal, so it doubles as the drop-target test.
+- `oncontextmenu` is assigned as a property rather than a listener, so there is nothing to
+  enumerate — the shim walks up the tree looking for the property itself.
+- iOS's long-press selection callout is suppressed, but only under `body.touch-input`, so
+  the Mac keeps normal text selection.
 
 ## Sequencing
 
