@@ -133,6 +133,18 @@
     min-height: 36px;
   }
   .settings-row .settings-btn:hover { background: var(--line); }
+  /* iOS pops a selection callout on long-press, which collides with the
+     lift gesture in installTouchDragShim. Only applied on touch input, so
+     the Mac keeps normal text selection. */
+  body.touch-input [draggable="true"],
+  body.touch-input .tab,
+  body.touch-input .island-pill {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* While a lift is active, stop the page rubber-banding under the finger. */
+  body.touch-dragging { overscroll-behavior: contain; }
   .settings-switch-row {
     display: flex;
     align-items: center;
@@ -1090,6 +1102,166 @@
     },
     canVibrancy: true,
   };
+
+  // ---- Touch drag + long-press shim (web on a touch device only) -------
+  //
+  // Every reorder in this file uses HTML5 native drag-and-drop
+  // (draggable + dragstart/dragover/drop), which NEVER fires from touch on
+  // iOS Safari — not degraded, inert. There are eight drop targets and
+  // three oncontextmenu handlers involved.
+  //
+  // Rather than rewrite all of them on Pointer Events (which would put the
+  // working Mac behaviour at risk for no gain), this synthesizes the same
+  // events from touch, with a stand-in dataTransfer. Every existing
+  // handler keeps working untouched, including any this comment forgot.
+  //
+  // The gesture mirrors iOS itself: long-press lifts, then
+  //   - move    -> drag and drop
+  //   - release -> context menu (which is how tab rename/colour becomes
+  //                reachable at all on a phone, since there is no
+  //                right-click)
+  function installTouchDragShim() {
+    const LIFT_MS = 350;
+    const MOVE_TOLERANCE = 10;   // px of slop before a press becomes a scroll
+
+    let timer = null;
+    let startX = 0, startY = 0;
+    let source = null;        // the [draggable] element, if any
+    let menuTarget = null;    // the element carrying oncontextmenu, if any
+    let armed = false;        // long-press elapsed; committed to not scrolling
+    let dragging = false;
+    let transfer = null;
+    let lastTarget = null;
+
+    function makeTransfer() {
+      const store = new Map();
+      return {
+        effectAllowed: "all",
+        dropEffect: "move",
+        get types() { return [...store.keys()]; },
+        files: [],
+        items: [],
+        setData(type, value) { store.set(type, String(value)); },
+        getData(type) { return store.get(type) || ""; },
+        clearData(type) { type ? store.delete(type) : store.clear(); },
+        setDragImage() {},
+      };
+    }
+
+    function fire(target, type, x, y) {
+      if (!target) return false;
+      const ev = new MouseEvent(type, {
+        bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0,
+      });
+      // MouseEvent has no dataTransfer, so a plain assignment adds one and
+      // handlers see the same shape they would from a real drag event.
+      ev.dataTransfer = transfer;
+      target.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    }
+
+    function reset() {
+      clearTimeout(timer);
+      timer = null;
+      armed = false;
+      dragging = false;
+      source = null;
+      menuTarget = null;
+      transfer = null;
+      lastTarget = null;
+      document.body.classList.remove("touch-dragging");
+    }
+
+    document.addEventListener("touchstart", ev => {
+      if (ev.touches.length !== 1) return reset();
+      const touch = ev.touches[0];
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (!el) return;
+
+      source = el.closest('[draggable="true"]');
+      menuTarget = findContextTarget(el);
+      if (!source && !menuTarget) return;
+
+      startX = touch.clientX;
+      startY = touch.clientY;
+      transfer = makeTransfer();
+
+      timer = setTimeout(() => {
+        armed = true;
+        document.body.classList.add("touch-dragging");
+      }, LIFT_MS);
+    }, { passive: true });
+
+    // oncontextmenu is assigned as a property, so there is no listener to
+    // enumerate — walk up looking for the property itself.
+    function findContextTarget(el) {
+      for (let node = el; node && node !== document.body; node = node.parentElement) {
+        if (typeof node.oncontextmenu === "function") return node;
+      }
+      return null;
+    }
+
+    document.addEventListener("touchmove", ev => {
+      if (!timer && !armed) return;
+      const touch = ev.touches[0];
+      if (!touch) return;
+
+      const dx = Math.abs(touch.clientX - startX);
+      const dy = Math.abs(touch.clientY - startY);
+
+      if (!armed) {
+        // Moved before the press landed — the user is scrolling. Stand down
+        // and let the browser have the gesture.
+        if (dx > MOVE_TOLERANCE || dy > MOVE_TOLERANCE) reset();
+        return;
+      }
+
+      // Armed: the gesture is ours, so stop the page scrolling under it.
+      ev.preventDefault();
+
+      if (!dragging) {
+        if (dx <= MOVE_TOLERANCE && dy <= MOVE_TOLERANCE) return;
+        if (!source) return;   // context-menu-only element: nothing to drag
+        dragging = true;
+        fire(source, "dragstart", touch.clientX, touch.clientY);
+      }
+
+      const over = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (!over) return;
+      // A dragover that calls preventDefault is HTML5's way of saying "I
+      // accept this drop", which is exactly what the existing handlers do.
+      if (fire(over, "dragover", touch.clientX, touch.clientY)) {
+        lastTarget = over;
+      }
+    }, { passive: false });
+
+    document.addEventListener("touchend", ev => {
+      const wasArmed = armed;
+      const wasDragging = dragging;
+      const src = source;
+      const menu = menuTarget;
+      const touch = ev.changedTouches[0];
+      const x = touch ? touch.clientX : startX;
+      const y = touch ? touch.clientY : startY;
+
+      clearTimeout(timer);
+
+      if (wasDragging) {
+        ev.preventDefault();
+        if (lastTarget) fire(lastTarget, "drop", x, y);
+        fire(src, "dragend", x, y);
+      } else if (wasArmed && menu) {
+        // Long-press, released without moving: the context menu.
+        ev.preventDefault();
+        transfer = null;
+        fire(menu, "contextmenu", x, y);
+      }
+
+      reset();
+    }, { passive: false });
+
+    document.addEventListener("touchcancel", reset, { passive: true });
+  }
 
   let state = load();
 
@@ -4154,6 +4326,12 @@
       }
     })();
   } else {
+    // Touch-primary only: on a desktop browser the real drag events work
+    // and the shim would just fight them.
+    if (window.matchMedia && matchMedia("(pointer: coarse)").matches) {
+      document.body.classList.add("touch-input");
+      installTouchDragShim();
+    }
     if ("serviceWorker" in navigator) {
       // After load, so registration never competes with first paint.
       window.addEventListener("load", () => {
