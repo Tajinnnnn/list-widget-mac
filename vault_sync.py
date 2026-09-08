@@ -1,4 +1,5 @@
 import copy
+import json
 import logging
 import os
 import random
@@ -455,3 +456,282 @@ def sync_pull_and_merge(local_state: dict, vault_root: Path = VAULT_ROOT) -> dic
         # Log the traceback so that's diagnosable instead of invisible.
         logger.exception("sync_pull_and_merge failed")
         return None
+
+
+# --- device-to-device document merge --------------------------------------
+#
+# merge() above merges a device document against the markdown-parsed shape
+# from today's daily note, using the note file's mtime as the effective
+# timestamp for every remote item (markdown carries no per-item times).
+#
+# merge_docs() below merges two full *device* documents. It is a sibling,
+# not a replacement, and it differs in four ways that make reusing merge()
+# here incorrect:
+#
+#   1. Both sides carry per-item `updatedAt`, so resolution is per item
+#      rather than one timestamp for the whole remote snapshot.
+#   2. merge()'s `syncToVault is False` / `type == "note"` tombstone
+#      exclusions exist because render_tasks_section omits those from the
+#      note. For device sync that inverts: a deleted note, or a deleted
+#      item in a non-vault list, must actually delete on the other device.
+#   3. It covers settings, islands and trash, not just lists + tombstones.
+#   4. The remote is the same shape as the local, so there is no
+#      _remote_to_item() translation step.
+#
+# Two properties the suite asserts directly, because they are what lets the
+# server skip an optimistic-concurrency retry loop — concurrent pushes
+# converge regardless of arrival order:
+#
+#   symmetry:    merge_docs(a, b) == merge_docs(b, a)   (ignoring `active`)
+#   idempotence: merge_docs(a, a) == a
+#
+# Every tie is therefore broken deterministically on content rather than on
+# argument position, since anything order-dependent breaks symmetry.
+
+_LIST_SCALARS = ("name", "color", "syncToVault", "islandId", "updatedAt")
+
+
+def _ts(d: dict, key: str = "updatedAt") -> str:
+    return d.get(key) or ""
+
+
+def _canon(d: dict, keys=None) -> str:
+    subset = d if keys is None else {k: d.get(k) for k in keys}
+    return json.dumps(subset, sort_keys=True, default=str)
+
+
+def _pick_newer(x: dict, y: dict, keys=None) -> dict:
+    """Whichever dict has the greater updatedAt; ties broken on content.
+
+    The content tie-break is arbitrary but position-independent, which is
+    exactly what symmetry requires — returning `x` on a tie would make
+    merge_docs(a, b) and merge_docs(b, a) disagree.
+    """
+    x_ts, y_ts = _ts(x), _ts(y)
+    if x_ts > y_ts:
+        return x
+    if y_ts > x_ts:
+        return y
+    return x if _canon(x, keys) <= _canon(y, keys) else y
+
+
+def _union_by(key: str, a_items, b_items) -> list:
+    """Union two lists of dicts on `key`, keeping the newer of each pair."""
+    out: dict = {}
+    order: list = []
+    for coll in (a_items or [], b_items or []):
+        for entry in coll:
+            ident = entry.get(key)
+            if ident is None:
+                continue
+            if ident not in out:
+                out[ident] = entry
+                order.append(ident)
+            else:
+                out[ident] = _pick_newer(out[ident], entry)
+    return [copy.deepcopy(out[i]) for i in sorted(order)]
+
+
+def _merge_item_order(la, lb, member_ids) -> list:
+    """Item id order for one merged list.
+
+    Order comes from whichever side's list was touched more recently; ids
+    that side does not know about are appended in the other side's order,
+    and anything left (an item whose home list changed) is appended sorted
+    so the result stays deterministic.
+    """
+    def seq(lst):
+        return [i.get("_id") for i in (lst.get("items") or [])]
+
+    if la is not None and lb is not None:
+        a_ts, b_ts = _ts(la), _ts(lb)
+        if b_ts > a_ts:
+            seqs = [seq(lb), seq(la)]
+        elif a_ts > b_ts:
+            seqs = [seq(la), seq(lb)]
+        else:
+            seqs = [seq(la), seq(lb)] if seq(la) <= seq(lb) else [seq(lb), seq(la)]
+    elif la is not None:
+        seqs = [seq(la)]
+    elif lb is not None:
+        seqs = [seq(lb)]
+    else:
+        seqs = []
+
+    remaining = set(member_ids)
+    ordered = []
+    for s in seqs:
+        for item_id in s:
+            if item_id in remaining:
+                ordered.append(item_id)
+                remaining.discard(item_id)
+    ordered.extend(sorted(remaining))
+    return ordered
+
+
+
+def _merge_trash(a_trash, b_trash) -> list:
+    """Union trash entries on `_id`, with a removal always winning.
+
+    Trash entries are immutable once created, so there is no `updatedAt`
+    to compare — the only mutation is a restore or a manual purge, which
+    sets `removedAt` instead of splicing the entry out. Keeping the
+    removed entry (rather than dropping it) is what makes the removal
+    survive a merge with a device that still holds the entry; drop it and
+    the stale side simply re-adds it. The client filters `removedAt` out
+    of the Trash view, and the trashRetention sweep purges them for good.
+    """
+    out: dict = {}
+    for coll in (a_trash or [], b_trash or []):
+        for entry in coll:
+            ident = entry.get("_id")
+            if ident is None:
+                continue
+            prev = out.get(ident)
+            if prev is None:
+                out[ident] = entry
+                continue
+            prev_removed = bool(prev.get("removedAt"))
+            cur_removed = bool(entry.get("removedAt"))
+            if cur_removed and not prev_removed:
+                out[ident] = entry
+            elif cur_removed and prev_removed:
+                if (entry.get("removedAt") or "") > (prev.get("removedAt") or ""):
+                    out[ident] = entry
+    return [copy.deepcopy(out[i]) for i in sorted(out)]
+
+def merge_docs(a: dict, b: dict) -> dict:
+    """Merge two full device documents with per-item last-write-wins.
+
+    `active` (the selected tab) is deliberately NOT merged — it is
+    per-device view state, and syncing it would make the tab you are
+    looking at jump when the other device changed lists. It is carried
+    over from `a`, which is the one intentional asymmetry.
+    """
+    a = copy.deepcopy(a or {})
+    b = copy.deepcopy(b or {})
+
+    # --- tombstones: union, newer wins ---
+    tombstones = {}
+    for doc in (a, b):
+        for t in doc.get("tombstones") or []:
+            ident = t.get("_id")
+            if ident is None:
+                continue
+            prev = tombstones.get(ident)
+            if prev is None or _ts(t) > _ts(prev):
+                tombstones[ident] = dict(t)
+
+    # --- items: union by _id, newer wins, home list follows the winner ---
+    items: dict = {}
+    home: dict = {}
+    for doc in (a, b):
+        for lst in doc.get("lists") or []:
+            list_id = lst.get("id")
+            for item in lst.get("items") or []:
+                ident = item.get("_id")
+                if ident is None:
+                    continue
+                if ident not in items:
+                    items[ident] = item
+                    home[ident] = list_id
+                    continue
+                prev = items[ident]
+                prev_ts, cur_ts = _ts(prev), _ts(item)
+                if cur_ts > prev_ts:
+                    items[ident], home[ident] = item, list_id
+                elif cur_ts == prev_ts:
+                    if _canon(item) < _canon(prev):
+                        items[ident] = item
+                    # min() rather than the winner's list, so an item with
+                    # identical content and timestamp sitting in different
+                    # lists on each side resolves the same way both ways.
+                    home[ident] = min(home[ident], list_id)
+
+    # --- apply tombstones against surviving items ---
+    for ident in list(items):
+        tomb = tombstones.get(ident)
+        if tomb is None:
+            continue
+        if _ts(tomb) > _ts(items[ident]):
+            del items[ident]
+            home.pop(ident, None)
+        else:
+            # The item was edited after it was deleted elsewhere, so the
+            # edit wins and the tombstone is stale. Drop it, matching how
+            # merge() clears a tombstone on resurrection — otherwise it
+            # lingers and re-deletes on a later merge.
+            del tombstones[ident]
+
+    # --- list order: from whichever side reordered tabs more recently ---
+    a_lists = {l["id"]: l for l in (a.get("lists") or []) if l.get("id")}
+    b_lists = {l["id"]: l for l in (b.get("lists") or []) if l.get("id")}
+    a_seq = [l["id"] for l in (a.get("lists") or []) if l.get("id")]
+    b_seq = [l["id"] for l in (b.get("lists") or []) if l.get("id")]
+    a_lo, b_lo = _ts(a, "listsUpdatedAt"), _ts(b, "listsUpdatedAt")
+    if b_lo > a_lo:
+        seqs = [b_seq, a_seq]
+    elif a_lo > b_lo:
+        seqs = [a_seq, b_seq]
+    else:
+        seqs = [a_seq, b_seq] if a_seq <= b_seq else [b_seq, a_seq]
+
+    list_ids = []
+    for s in seqs:
+        for list_id in s:
+            if list_id not in list_ids:
+                list_ids.append(list_id)
+
+    merged_lists = []
+    for list_id in list_ids:
+        la, lb = a_lists.get(list_id), b_lists.get(list_id)
+        if la is None:
+            base = copy.deepcopy(lb)
+        elif lb is None:
+            base = copy.deepcopy(la)
+        else:
+            base = copy.deepcopy(_pick_newer(la, lb, _LIST_SCALARS))
+        member_ids = [i for i, h in home.items() if h == list_id]
+        base["items"] = [
+            copy.deepcopy(items[i]) for i in _merge_item_order(la, lb, member_ids)
+        ]
+        merged_lists.append(base)
+
+    result = {
+        "lists": merged_lists,
+        # Sorted by id, not left in a-then-b insertion order: the contents
+        # would match either way, but the *sequence* would not, which
+        # breaks symmetry and would make the server rewrite the document
+        # on every alternating push.
+        "tombstones": purge_old_tombstones(
+            sorted(tombstones.values(), key=lambda t: t["_id"])
+        ),
+        "islands": _union_by("id", a.get("islands"), b.get("islands")),
+        # Trash entries are immutable once created; a restore or a manual
+        # purge sets `removedAt` rather than splicing, so the removal
+        # survives a merge with a device that still has the entry. The
+        # client filters `removedAt` out of the Trash view and the
+        # trashRetention sweep drops them for good.
+        "trash": _merge_trash(a.get("trash"), b.get("trash")),
+        "migratedDefaultListName": bool(a.get("migratedDefaultListName"))
+        or bool(b.get("migratedDefaultListName")),
+    }
+
+    a_settings, b_settings = a.get("settings"), b.get("settings")
+    if a_settings and b_settings:
+        result["settings"] = copy.deepcopy(_pick_newer(a_settings, b_settings))
+    else:
+        result["settings"] = copy.deepcopy(a_settings or b_settings or {})
+
+    lists_updated = max(a_lo, b_lo)
+    if lists_updated:
+        result["listsUpdatedAt"] = lists_updated
+
+    # Per-device, never merged. Fall back to the first surviving list if the
+    # tab this device was looking at was deleted on the other one.
+    active = a.get("active")
+    if active is None or active not in list_ids:
+        active = list_ids[0] if list_ids else None
+    result["active"] = active
+
+    return result

@@ -111,17 +111,40 @@ comparison is correct for the fixed-width UTC format the client emits).
   `normalizeIslandContiguity()` / `normalizeSubtaskContiguity()` after applying.
 - **`settings`** — whole-object LWW via a new `settings.updatedAt`.
 - **`islands`** — union by id, per-island `updatedAt`.
-- **`trash`** — union by `_id`, LWW; the existing `trashRetention` purge still applies
-  client-side.
-- **`active`** — never merged; preserved from whichever document the caller treats as local.
+- **`trash`** — union by `_id`, with a **removal always winning**. Trash entries are
+  immutable once created, so there is no `updatedAt` to compare; the only mutation is a
+  restore or a manual purge, which sets **`removedAt`** rather than splicing the entry out.
+  The marked entry is kept, not dropped — dropping it would let a device that still holds
+  the entry simply re-add it on the next merge. The client filters `removedAt` out of the
+  Trash view, and the existing `trashRetention` sweep purges them for good. **This makes
+  restore/purge a soft delete in `todo.html`, which is a required client change.**
+- **`active`** — never merged; carried over from `a`. Falls back to the first surviving
+  list if the tab this device was on was deleted on the other one.
+- **Top-level tab order** — from whichever side has the newer **`listsUpdatedAt`**, a new
+  document-level field stamped when tabs are reordered. Without it, tab order would depend
+  on argument order and symmetry would not hold.
 - **Tie-break.** When two `updatedAt` values are equal, take the copy whose
   `json.dumps(obj, sort_keys=True)` is lexicographically smaller. Arbitrary but
-  deterministic, which is what makes symmetry hold.
+  position-independent, which is what makes symmetry hold — returning the first argument
+  on a tie would not. An item with identical content and timestamp in a different list on
+  each side resolves to `min()` of the two list ids for the same reason.
 
-Two properties the test suite asserts directly:
+### Canonical form
 
-- **Symmetry:** `merge_docs(a, b) == merge_docs(b, a)`
-- **Idempotence:** `merge_docs(a, a) == a`
+`merge_docs` returns a **canonical** document: `tombstones`, `islands`, and `trash` are
+sorted by id. Contents would match either way, but the *sequence* would not, and an
+argument-order-dependent sequence would make the server rewrite the row on every
+alternating push. A document straight off a client is not canonical — it appends
+tombstones in deletion order — so idempotence is stated against the canonical form.
+
+Properties the suite asserts directly, over 300 randomized multi-list documents each:
+
+- **Symmetry:** `merge_docs(a, b) == merge_docs(b, a)`, ignoring `active`
+- **Idempotence:** `merge_docs(d, d) == canonical(d)`, and canonical output is a fixed point
+- **Stability:** `merge_docs(merge_docs(a, b), b) == merge_docs(a, b)` — a client pushing
+  again after receiving the merged document does not keep changing it
+- **No duplication:** no `_id` appears in two lists
+- **Tombstone soundness:** no surviving item carries a tombstone newer than itself
 
 Symmetry plus idempotence is what removes the need for an optimistic-concurrency retry
 loop: concurrent pushes converge regardless of arrival order.
@@ -132,10 +155,12 @@ loop: concurrent pushes converge regardless of arrival order.
 rename, a tab color change, a settings toggle, and an island edit are all invisible to LWW.
 It is extended to stamp:
 
-- `list.updatedAt` — tracked fields: `name`, `color`, `syncToVault`, and item-id order
+- `list.updatedAt` — tracked fields: `name`, `color`, `syncToVault`, `islandId`, and
+  item-id order
+- `listsUpdatedAt` (document level) — stamped when the tab order itself changes
 - `settings.updatedAt` — any tracked settings field
 - `island.updatedAt` — any tracked island field
-- `trash` entries — stamped on entry
+- `trash[].removedAt` — set on restore or manual purge, instead of splicing the entry
 
 It keeps its existing `lastItemFields` snapshot-diff approach, extended to lists, settings,
 and islands, so a save that changes nothing still stamps nothing.
