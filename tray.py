@@ -57,5 +57,21 @@ def setup_tray():
         # AppKit pop it open on every click. Detach it — TrayIcon.__call__
         # pops it up manually, only on right-click.
         icon._status_item.setMenu_(None)
+        # An NSStatusBarButton sends its action on LEFT mouse-up only, and
+        # pystray's darwin backend never widens that (it calls setTarget_/
+        # setAction_ but no sendActionOn_). So a right-click never invoked
+        # TrayIcon.__call__ at all and the right-click branch there was
+        # dead code — the Hide/Quit menu could not be opened, which left
+        # the tray Quit item unreachable and the app quittable only from
+        # Activity Monitor. Widen the mask so right-clicks arrive too.
+        try:
+            icon._status_item.button().sendActionOn_(
+                AppKit.NSEventMaskLeftMouseUp | AppKit.NSEventMaskRightMouseUp
+            )
+        except Exception:
+            # Same defensive posture as the template-image call above: a
+            # pystray/PyObjC change here should cost the right-click menu,
+            # not the whole menu bar icon.
+            pass
 
     state.tray_icon.run_detached(setup=_setup)
