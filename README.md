@@ -46,7 +46,10 @@ sounds, etc.) aren't automatically in that repo.
 
 ## Features
 
-- Tabs for multiple lists, pinning, due dates/repeats (with explicit
+- Collapsible sidebar for multiple lists and island groups, with vertical drag
+  reordering, keyboard selection, and a drawer on narrow windows. Icarus dark
+  plum panels and pink accents, with optional native desktop glass.
+- Pinning, due dates/repeats (with explicit
   hour/minute/AM-PM fields, since the native time input silently follows
   the system's 24-hour-vs-12-hour locale setting) and a native calendar
   picker, native macOS notifications for due tasks.
@@ -64,7 +67,7 @@ sounds, etc.) aren't automatically in that repo.
   never. There's no separate manual "clear" button — completed tasks
   live in the Completed view (restore/delete individually) until the
   retention timer sweeps them.
-- Settings also has a "Translucent background" switch — a frosted,
+- Settings also has a "Glass background" switch — a frosted,
   see-through look like Control Center, via a live-toggleable
   `NSVisualEffectView` (see "Live vibrancy toggle" below).
 - Seamless window chrome: no title text, no titlebar strip, no header
@@ -224,53 +227,36 @@ rm -rf ~/Library/WebKit/club.build4fun.listwidget   # saved tasks
 
 ## Live vibrancy toggle
 
-pywebview only supports a translucent/blurred window via `vibrancy=True`
-and `transparent=True` passed to `create_window()` — both constructor-time
-only, so they can't back a runtime Settings switch without recreating the
-window. Instead, `app.py` exposes a `JsApi.set_vibrancy(enabled)` method via
-pywebview's `js_api=` bridge (`window.pywebview.api.set_vibrancy(...)` from
-JS, available after the `pywebviewready` event fires). That method reaches
-into `webview.platforms.cocoa.BrowserView.instances["master"]` to grab the
-actual `WKWebView` and `NSWindow` pywebview created, then does by hand what
-`vibrancy=True`/`transparent=True` would have done at startup: sets
-`underPageBackgroundColor` on the webview (the public, supported API for
-this — `drawsTransparentBackground` is a private, deprecated KVC hook kept
-only as a cheap extra nudge, not the real mechanism), makes the window
-non-opaque, **clears the window's own `backgroundColor`** (it defaults to
-a solid opaque fill from `configure_window_chrome` and blocks the blur
-from ever sampling real content if left alone — this was the actual fix
-after `underPageBackgroundColor` alone still didn't work), and inserts an
-`NSVisualEffectView` behind the webview. `todo.html` toggles a
-`body.vibrancy` CSS class (a heavily tinted, mostly-opaque color, not
-fully see-through — see below) in lock step.
+The Glass background switch waits for the native operation to complete before
+changing the page transparency or saving the preference. Failed requests leave
+the preference unchanged and show a status message; native errors are logged.
 
-Two things worth knowing if this needs touching again:
+`window_chrome.py` owns a content `NSView` containing the blur, WKWebView and
+traffic lights. The blur no longer lives inside AppKit's private titlebar frame.
+Both native and web views resize with this container, and late chrome setup
+preserves the current transparency state. `drawsBackground` disables WebKit's
+opaque fill (a private KVC setting, covered by native regression tests);
+`underPageBackgroundColor` also follows the glass state. macOS Reduce Transparency
+may limit the visible blur.
 
-- **Blur radius is not adjustable.** NSVisualEffectView materials
-  (`.sidebar`, `.hudWindow`, `.fullScreenUI`, ...) differ in *tint*, not
-  blur strength — swapping materials was tested and made no visible
-  difference. macOS doesn't expose blur radius as a public API; matching
-  Control Center's blur exactly isn't possible without implementing blur
-  from scratch (continuously capturing + filtering whatever's behind the
-  window), which is a much bigger, more fragile undertaking than this
-  feature warrants. `body.vibrancy`'s tint is intentionally high (~90%
-  opacity) specifically to compensate — it's doing more of the visual
-  work than the actual blur is.
-- **Startup reapply is a race, not just an event listener.** If vibrancy
-  was left on, `todo.html` needs to reapply it once `window.pywebview.api`
-  exists. Relying solely on the `pywebviewready` event was flaky — it can
-  fire before the listener attaches, silently skipping the whole session.
-  There's now also a `setTimeout` poll as a guaranteed fallback alongside
-  the event.
-- **The JS-side race above has a Python-side mirror.** `window.pywebview.api`
-  going truthy in JS doesn't guarantee `BrowserView.instances["master"]` is
-  registered yet on the Python side — under the `file://` loading fix (see
-  "Data" above), the JS bridge can win that race more often since there's
-  no local HTTP server round-trip slowing it down. `apply_vibrancy()`'s
-  `_apply()` used to silently no-op if `browser_view` was `None`; it now
-  retries itself via `AppHelper.callLater` for a few hundred ms instead of
-  giving up, so a startup reapply that arrives "too early" self-heals
-  rather than requiring a manual retoggle.
+Bridge calls dispatch to the AppKit thread and return the actual result.
+Requests still queued after five seconds are cancelled, so a reported failure
+cannot unexpectedly change the appearance later.
+
+### UI regression checks
+
+```bash
+uv run pytest
+# Requires Playwright and its Chromium browser; NODE_PATH can point at a shared installation.
+node 'tests/sidebar-ui(C).cjs'
+uv run python 'tests/native-preview(C).py'
+```
+
+The browser test uses synthetic tasks in an isolated browser context. The native
+smoke test substitutes an ephemeral WKWebView store and a preview-only bridge:
+it never starts backup writes, vault sync, the tray, or notifications. Generated
+fixtures and screenshots live under `build/ui-fixtures/`. Native tests cover
+startup ordering, repeated toggles, failures, cancellation and window resizing.
 
 ## Seamless titlebar (why `app.py` pokes at private-ish AppKit views)
 

@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import Future, TimeoutError
 
 import AppKit
 import WebKit
@@ -31,8 +32,33 @@ def clear_webkit_cache():
 
 def _window_bg_color():
     return AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(
-        0x16 / 255, 0x18 / 255, 0x1D / 255, 1.0
+        0x0A / 255, 0x09 / 255, 0x0C / 255, 1.0
     )
+
+
+def _browser_view():
+    from webview.platforms.cocoa import BrowserView
+
+    return BrowserView.instances.get(getattr(state.window, "uid", "master"))
+
+
+def _content_container(browser_view):
+    # Own the compositing stack rather than inserting siblings into AppKit's
+    # private NSThemeFrame, which is rebuilt when the titlebar changes.
+    container = getattr(browser_view, "_list_container", None)
+    if container is None:
+        web = browser_view.webview
+        window = browser_view.window
+        container = AppKit.NSView.alloc().initWithFrame_(web.frame())
+        container.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+        web.retain()
+        window.setContentView_(container)
+        web.setFrame_(container.bounds())
+        web.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+        container.addSubview_(web)
+        web.release()
+        browser_view._list_container = container
+    return container
 
 
 def configure_window_chrome():
@@ -51,9 +77,13 @@ def configure_window_chrome():
             ns_window.setStyleMask_(
                 ns_window.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView
             )
-            ns_window.setBackgroundColor_(_window_bg_color())
-
-            content_view = ns_window.contentView()
+            browser_view = _browser_view()
+            if browser_view is None:
+                raise RuntimeError("Native browser is not ready")
+            enabled = getattr(browser_view, "_list_vibrancy_enabled", False)
+            ns_window.setOpaque_(not enabled)
+            ns_window.setBackgroundColor_(AppKit.NSColor.clearColor() if enabled else _window_bg_color())
+            content_view = _content_container(browser_view)
 
             # Grab the three standard buttons *before* going borderless —
             # standardWindowButton_ only returns real controls for a titled
@@ -62,7 +92,7 @@ def configure_window_chrome():
             # fixed frame) so they stay pinned to the top-left corner
             # correctly when the window is resized, regardless of the
             # content view's flipped-ness.
-            button_center_y = 17
+            button_center_y = 24
             start_x = 13
             spacing = 20
 
@@ -114,77 +144,63 @@ def configure_window_chrome():
     AppHelper.callAfter(_apply)
 
 
+def _apply_vibrancy_now(enabled):
+    """Apply on the AppKit thread; return the actual outcome to the bridge."""
+    try:
+        browser_view = _browser_view()
+        if browser_view is None:
+            raise RuntimeError("Native browser is not ready")
+        web = browser_view.webview
+        window = browser_view.window
+        # WebKit's drawsTransparentBackground setter is deprecated. This KVC
+        # setting is still private, so fail visibly if a future WebKit drops it.
+        web.setValue_forKey_(not enabled, "drawsBackground")
+        web.setUnderPageBackgroundColor_(
+            AppKit.NSColor.clearColor() if enabled else _window_bg_color()
+        )
+        container = _content_container(browser_view)
+        effect = getattr(browser_view, "_vibrancy_view", None)
+        if enabled and effect is None:
+            effect = AppKit.NSVisualEffectView.alloc().initWithFrame_(container.bounds())
+            effect.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+            effect.setState_(AppKit.NSVisualEffectStateActive)
+            effect.setMaterial_(AppKit.NSVisualEffectMaterialHUDWindow)
+            effect.setAppearance_(AppKit.NSAppearance.appearanceNamed_(AppKit.NSAppearanceNameDarkAqua))
+            effect.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
+            container.addSubview_positioned_relativeTo_(effect, AppKit.NSWindowBelow, web)
+            browser_view._vibrancy_view = effect
+        if effect is not None:
+            effect.setHidden_(not enabled)
+        window.setOpaque_(not enabled)
+        window.setBackgroundColor_(AppKit.NSColor.clearColor() if enabled else _window_bg_color())
+        window.setHasShadow_(True)
+        browser_view._list_vibrancy_enabled = enabled
+        return True
+    except Exception:
+        logger.exception("apply_vibrancy failed")
+        return False
+
+
 def apply_vibrancy(enabled):
-    # pywebview only supports vibrancy/transparent as create_window()-time
-    # constructor flags, so toggling it live from a Settings switch means
-    # reaching into the same private bits pywebview itself would use: the
-    # actual WKWebView (via BrowserView.instances, keyed by window uid) and
-    # an NSVisualEffectView inserted behind it.
-    def _apply(_retries_left=15):
-        try:
-            from webview.platforms.cocoa import BrowserView
+    if AppKit.NSThread.isMainThread():
+        return _apply_vibrancy_now(bool(enabled))
+    # pywebview invokes bridge methods on workers. Waiting there is safe;
+    # never wait on the AppKit thread or call evaluate_js from this callback.
+    result = Future()
 
-            browser_view = BrowserView.instances.get("master")
-            if browser_view is None:
-                # Under file:// loading (see the html_path fix in __main__),
-                # window.pywebview.api can go truthy on the JS side before
-                # BrowserView.instances["master"] is registered on this side
-                # — the old HTTP-server loading path happened to be slow
-                # enough that this never raced. Retry instead of silently
-                # dropping the call, so startup reapply doesn't depend on
-                # winning that race.
-                if _retries_left > 0:
-                    AppHelper.callLater(0.2, _apply, _retries_left - 1)
-                return
-            webview_native = browser_view.webview
-            ns_window = browser_view.window
+    def apply():
+        if result.set_running_or_notify_cancel():
+            result.set_result(_apply_vibrancy_now(bool(enabled)))
 
-            # drawsTransparentBackground is a private, deprecated KVC hook
-            # that WebKit was resetting on its own repaints (worse now that
-            # the traffic-light buttons are reparented as real subviews
-            # directly on this WKWebView, which changes how it composites).
-            # underPageBackgroundColor is the public, supported API for
-            # "what shows through where the page itself doesn't paint" —
-            # use that as the actual mechanism and keep the old hook as a
-            # cheap extra nudge.
-            webview_native.setUnderPageBackgroundColor_(
-                AppKit.NSColor.clearColor() if enabled else _window_bg_color()
-            )
-            webview_native.setValue_forKey_(bool(enabled), "drawsTransparentBackground")
-            ns_window.setOpaque_(not enabled)
-            # The window's own backgroundColor was set to a solid opaque
-            # color once at startup (configure_window_chrome) and never
-            # revisited — that solid fill was likely blocking the "behind
-            # window" blur from ever sampling real desktop content.
-            ns_window.setBackgroundColor_(
-                AppKit.NSColor.clearColor() if enabled else _window_bg_color()
-            )
-
-            # (The old titlebar decoration view that used to cause a seam
-            # here is permanently hidden now — see configure_window_chrome.)
-
-            effect = getattr(browser_view, "_vibrancy_view", None)
-            if enabled:
-                if effect is None:
-                    effect = AppKit.NSVisualEffectView.alloc().initWithFrame_(
-                        webview_native.bounds()
-                    )
-                    effect.setAutoresizingMask_(
-                        AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
-                    )
-                    effect.setWantsLayer_(True)
-                    effect.setState_(AppKit.NSVisualEffectStateActive)
-                    effect.setMaterial_(AppKit.NSVisualEffectMaterialHUDWindow)
-                    effect.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
-                    webview_native.superview().addSubview_positioned_relativeTo_(
-                        effect, AppKit.NSWindowBelow, webview_native
-                    )
-                    browser_view._vibrancy_view = effect
-                else:
-                    effect.setHidden_(False)
-            elif effect is not None:
-                effect.setHidden_(True)
-        except Exception:
-            pass
-
-    AppHelper.callAfter(_apply)
+    AppHelper.callAfter(apply)
+    try:
+        return result.result(timeout=5)
+    except TimeoutError:
+        # Cancellation and callback startup are atomic. A failed queued
+        # request must never run later and disagree with the saved/CSS state.
+        if result.cancel():
+            logger.error("apply_vibrancy timed out waiting for AppKit")
+            return False
+        # AppKit already began the short synchronous operation: return its
+        # actual result rather than pretending a running mutation was cancelled.
+        return result.result()

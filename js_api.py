@@ -16,8 +16,7 @@ def _first_path(result):
 
 class JsApi:
     def set_vibrancy(self, enabled):
-        apply_vibrancy(bool(enabled))
-        return True
+        return apply_vibrancy(bool(enabled))
 
     def save_backup(self, data):
         # write_backup now reports whether the disk write actually landed

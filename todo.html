@@ -12,45 +12,31 @@
 <link rel="apple-touch-icon" href="/icon-192.png">
 <style>
   :root {
-    --bg: #16181d;
-    --panel: #1e2128;
-    --line: #2b2f38;
-    --text: #e7e9ee;
-    --muted: #8b909c;
-    --accent: #6ea8fe;
-    --done: #565b66;
-    --danger: #ff6b6b;
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --line: #e7e9ee;
-      --text: #1c1e24;
-      --muted: #8b909c;
-      --accent: #2f6fed;
-      --done: #b3b7c0;
-      --danger: #e0483d;
-    }
+    color-scheme: dark;
+    --bg: #0a090c;
+    --panel: #151217;
+    --line: #302933;
+    --text: #ded9db;
+    --muted: #a49aa5;
+    --accent: #cf7f97;
+    --done: #605a63;
+    --danger: #e47069;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
     background: var(--bg);
     color: var(--text);
-    font: 15px/1.4 "Segoe UI", system-ui, sans-serif;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     display: flex;
     justify-content: flex-start;
     -webkit-user-select: none;
     user-select: none;
   }
-  body.vibrancy { background: rgba(22, 24, 29, 0.9); }
-  @media (prefers-color-scheme: light) {
-    body.vibrancy { background: rgba(246, 247, 249, 0.9); }
-  }
+  body.vibrancy { background: rgba(10, 9, 12, 0.24); }
   .app {
     width: 100%;
-    max-width: 460px;
+    max-width: none;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -877,26 +863,96 @@
   .empty { text-align: center; color: var(--muted); padding: 40px 20px; font-size: 14px; }
   ul::-webkit-scrollbar { width: 8px; }
   ul::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  /* (C) Icarus palette with a native glass backdrop and vertical navigation. */
+  [hidden] { display: none !important; }
+  button, input, select { font-family: inherit; }
+  button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  header { height: 48px; flex: none; padding: 8px 14px 8px 84px; border-bottom: 1px solid var(--line); }
+  body.web header { height: auto; min-height: 48px; padding-top: max(8px, env(safe-area-inset-top)); }
+  .brand { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+  #sidebarToggle { margin-left: auto; border: 1px solid var(--line); border-radius: 6px; width: 32px; height: 30px; }
+  .workspace { display: flex; flex: 1; min-height: 0; position: relative; }
+  .sidebar { width: 168px; flex: none; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: rgba(21,18,23,.72); }
+  .sidebar-heading { padding: 18px 16px 9px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .12em; }
+  .tabs { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; flex-direction: column; align-items: stretch; gap: 4px; padding: 0 8px 12px; }
+  .tabs::-webkit-scrollbar { width: 4px; }
+  .tabs::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  .tab { min-height: 36px; width: 100%; padding: 8px; border-radius: 6px; font-size: 12px; gap: 7px; }
+  .tab-name-text, .island-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .tab-name-text { flex: 1; }
+  .tab.active { background: color-mix(in srgb, var(--tab-color, var(--accent)) 17%, transparent); color: var(--text); border-color: color-mix(in srgb, var(--tab-color, var(--accent)) 35%, transparent); }
+  .tab.active .tab-dot { display: block; background: var(--tab-color, var(--accent)); }
+  .tab .tab-dot { width: 6px; height: 6px; }
+  .tab .tab-x { flex: none; }
+  .tab.drag-over-left { box-shadow: inset 0 2px 0 var(--accent); }
+  .tab.drag-over-right { box-shadow: inset 0 -2px 0 var(--accent); }
+  .tab.drag-over-group { box-shadow: inset 0 0 0 2px var(--accent); }
+  .island { padding: 4px; gap: 4px; border-radius: 7px; }
+  .island-label { min-height: 28px; }
+  .island-body { flex-direction: column; align-items: stretch; gap: 2px; }
+  .island-body .tab { padding-left: 9px; }
+  .tab-add { width: 100%; min-height: 34px; height: auto; margin-top: 8px; text-align: left; padding: 8px; border-radius: 6px; font-size: 12px; }
+  .sidebar-nav { flex: none; display: grid; gap: 3px; padding: 10px 8px; border-top: 1px solid var(--line); }
+  .nav-btn { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 7px 9px; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); text-align: left; font-size: 12px; cursor: pointer; }
+  .nav-btn:hover { color: var(--text); background: var(--panel); }
+  .nav-btn.active { color: var(--accent); background: rgba(207,127,151,.1); border-color: rgba(207,127,151,.18); }
+  .nav-icon { width: 16px; text-align: center; font-size: 15px; }
+  .content { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .view-heading { display: flex; align-items: center; gap: 6px; padding: 17px 18px 12px; flex: none; }
+  #viewTitle { font-size: 17px; font-weight: 600; letter-spacing: -.025em; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .view-heading .count { margin-left: auto; color: var(--muted); white-space: nowrap; font-size: 11px; }
+  #list { min-height: 0; padding: 0 8px 12px; }
+  .add { padding: 12px; gap: 6px; }
+  .add input { min-width: 0; font-size: 14px; padding: 10px; }
+  .add button { flex: none; width: 34px; color: #170f14; }
+  .add .add-type-toggle { width: 28px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+  .settings-view { padding: 4px 10px; }
+  .appearance-status { padding: 8px 14px; color: var(--danger); font-size: 12px; flex: none; }
+  .sidebar-backdrop { display: none; }
+  .app.sidebar-collapsed .sidebar { display: none; }
+  @media (max-width: 479px) {
+    .sidebar { display: none; position: absolute; z-index: 8; inset: 0 auto 0 0; width: 210px; background: #151217; box-shadow: 8px 0 24px #0005; }
+    .app.sidebar-open .sidebar { display: flex; }
+    .app.sidebar-open .sidebar-backdrop { display: block; position: absolute; inset: 0; z-index: 7; border: 0; background: #0007; }
+    .tab, .nav-btn { min-height: 42px; }
+    .view-heading { padding-top: 14px; }
+  }
 </style>
 
 <div class="app">
   <header>
-    <button id="backBtn" class="icon-btn" title="Back" hidden>←</button>
-    <span class="count" id="count"></span>
-    <button id="calStyleBtn" class="icon-btn" title="Calendar layout" hidden>⋯</button>
-    <button id="sortBtn" class="icon-btn" title="Sort">⇅</button>
-    <button id="calendarBtn" class="icon-btn" title="Calendar">📅</button>
-    <button id="archiveBtn" class="icon-btn" title="Completed tasks">🗂️</button>
-    <button id="trashBtn" class="icon-btn" title="Trash">🗑️</button>
-    <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
+    <span class="brand">List</span>
+    <button id="sidebarToggle" class="icon-btn" title="Toggle sidebar" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="true">☰</button>
   </header>
-  <div class="tabs" id="tabs"></div>
-  <ul id="list"></ul>
-  <form class="add" id="form">
-    <button type="button" id="addTypeToggle" class="add-type-toggle" title="Adding a task — click to switch to a note">☑</button>
-    <input id="input" placeholder="Add a task…" autocomplete="off" autofocus>
-    <button type="submit" title="Add">+</button>
-  </form>
+  <div id="appearanceStatus" class="appearance-status" role="status" hidden></div>
+  <div class="workspace">
+    <button id="sidebarBackdrop" class="sidebar-backdrop" aria-label="Close sidebar" tabindex="-1"></button>
+    <aside class="sidebar" id="sidebar" aria-label="Navigation">
+      <div class="sidebar-heading">Your lists</div>
+      <div class="tabs" id="tabs" aria-label="Lists"></div>
+      <nav class="sidebar-nav" aria-label="Views">
+        <button id="calendarBtn" class="nav-btn" title="Calendar"><span class="nav-icon">▦</span>Calendar</button>
+        <button id="archiveBtn" class="nav-btn" title="Completed tasks"><span class="nav-icon">☑</span>Completed</button>
+        <button id="trashBtn" class="nav-btn" title="Trash"><span class="nav-icon">⌫</span>Trash</button>
+        <button id="settingsBtn" class="nav-btn" title="Settings"><span class="nav-icon">⚙</span>Settings</button>
+      </nav>
+    </aside>
+    <main class="content">
+      <div class="view-heading">
+        <button id="backBtn" class="icon-btn" title="Back to list" hidden>←</button>
+        <h1 id="viewTitle"></h1>
+        <span class="count" id="count"></span>
+        <button id="calStyleBtn" class="icon-btn" title="Calendar layout" hidden>⋯</button>
+        <button id="sortBtn" class="icon-btn" title="Sort">⇅</button>
+      </div>
+      <ul id="list"></ul>
+      <form class="add" id="form">
+        <button type="button" id="addTypeToggle" class="add-type-toggle" title="Adding a task — click to switch to a note">☑</button>
+        <input id="input" placeholder="Add a task…" autocomplete="off" autofocus>
+        <button type="submit" title="Add">+</button>
+      </form>
+    </main>
+  </div>
 </div>
 
 <script>
@@ -1104,6 +1160,7 @@
     };
   })();
 
+  let localSavePending = 0, localSaveRevision = 0, lastSharedRaw = null;
   const Platform = IS_WEB ? {
     saveState(json) { SYNC.schedulePush(); },
     setVibrancy(enabled) { /* NSVisualEffectView is Mac-only */ },
@@ -1111,12 +1168,13 @@
   } : {
     saveState(json) {
       if (window.pywebview && window.pywebview.api && window.pywebview.api.save_backup) {
-        window.pywebview.api.save_backup(json).catch(() => {});
+        localSavePending++; localSaveRevision++;
+        window.pywebview.api.save_backup(json).catch(() => {}).finally(() => { localSavePending--; });
       }
     },
     setVibrancy(enabled) {
       if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.set_vibrancy(!!enabled);
+        return window.pywebview.api.set_vibrancy(!!enabled);
       }
     },
     canVibrancy: true,
@@ -1283,6 +1341,46 @@
   }
 
   let state = load();
+
+  // Folder expansion belongs to this window/device, like the selected list.
+  // Shared documents can carry another client's (or an older) collapsed flag.
+  // Keep local preferences separate so every sync/recovery path respects them.
+  const ISLAND_COLLAPSE_KEY = "todo.island-collapse.v1";
+  const islandCollapse = new Map();
+  try {
+    const stored = JSON.parse(localStorage.getItem(ISLAND_COLLAPSE_KEY) || "{}");
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      Object.entries(stored).forEach(([id, collapsed]) => {
+        if (typeof collapsed === "boolean") islandCollapse.set(id, collapsed);
+      });
+    }
+  } catch { /* Seed from the existing document if the preference is unavailable. */ }
+
+  function persistIslandCollapse() {
+    localStorage.setItem(ISLAND_COLLAPSE_KEY, JSON.stringify(Object.fromEntries(islandCollapse)));
+  }
+
+  function applyIslandCollapsePreferences() {
+    let added = false;
+    (state.islands || []).forEach(island => {
+      if (!islandCollapse.has(island.id)) {
+        islandCollapse.set(island.id, !!island.collapsed);
+        added = true;
+      }
+      island.collapsed = islandCollapse.get(island.id);
+    });
+    if (added) persistIslandCollapse();
+  }
+
+  function setIslandCollapsed(island, collapsed) {
+    islandCollapse.set(island.id, collapsed);
+    island.collapsed = collapsed;
+    persistIslandCollapse();
+    renderTabs();
+    renderList();
+  }
+
+  applyIslandCollapsePreferences();
 
   const TRACKED_ITEM_FIELDS = ["text", "done", "due", "dueAllDay", "pinned", "repeat", "repeatDays", "repeatWeekday", "repeatOccurrence"];
 
@@ -1782,6 +1880,7 @@
   }
 
   function save() {
+    applyIslandCollapsePreferences();
     normalizeIslandContiguity();
     normalizeSubtaskContiguity();
     stampUpdatedAtAndTombstones();
@@ -1848,6 +1947,8 @@
     if (!Array.isArray(state.islands)) state.islands = [];
     if (!Array.isArray(state.trash)) state.trash = [];
 
+    applyIslandCollapsePreferences();
+
     // `active` is per-device view state and the server never merges it,
     // but a document round-tripped through another client can still carry
     // that client's value. Keep whichever tab this device was on, as long
@@ -1905,6 +2006,10 @@
   // add-trash-recovery: { item, subtasks } for "task", { item } or
   // { taskId, text } for "note", { list } for "list".
   function trashItem(kind, payload, listId, listName) {
+    if (kind === "list") {
+      state.listTombstones = (state.listTombstones || []).filter(t => t.id !== listId);
+      state.listTombstones.push({ id: listId, updatedAt: new Date().toISOString() });
+    }
     state.trash.push({
       _id: uid(), kind, deletedAt: new Date().toISOString(), listId, listName, payload,
     });
@@ -1924,7 +2029,12 @@
 
   function buildTabEl(l) {
     const tab = document.createElement("div");
-    tab.className = "tab" + (l.id === state.active ? " active" : "");
+    tab.className = "tab" + (l.id === state.active && viewMode === "active" ? " active" : "");
+    tab.title = l.name;
+    tab.tabIndex = 0;
+    tab.setAttribute("role", "button");
+    tab.setAttribute("aria-pressed", String(l.id === state.active && viewMode === "active"));
+    tab.onkeydown = ev => { if (ev.target === tab && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); tab.click(); } };
     tab.dataset.listId = l.id;
     if (l.color) tab.style.setProperty("--tab-color", l.color);
 
@@ -1936,7 +2046,7 @@
     name.textContent = l.name;
     name.ondblclick = ev => { ev.stopPropagation(); renameTab(l, tab, name); };
 
-    tab.onclick = () => { state.active = l.id; save(); renderTabs(); renderList(); };
+    tab.onclick = () => { state.active = l.id; save(); setViewMode("active"); };
     tab.oncontextmenu = ev => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -1960,7 +2070,7 @@
       if (!draggedListId || draggedListId === l.id) return;
       ev.preventDefault();
       const rect = tab.getBoundingClientRect();
-      const pct = (ev.clientX - rect.left) / rect.width;
+      const pct = (ev.clientY - rect.top) / rect.height;
       tab.classList.toggle("drag-over-left", pct < 0.33);
       tab.classList.toggle("drag-over-group", pct >= 0.33 && pct <= 0.67);
       tab.classList.toggle("drag-over-right", pct > 0.67);
@@ -1972,7 +2082,7 @@
       tab.classList.remove("drag-over-left", "drag-over-right", "drag-over-group");
       if (!draggedListId || draggedListId === l.id) return;
       const rect = tab.getBoundingClientRect();
-      const pct = (ev.clientX - rect.left) / rect.width;
+      const pct = (ev.clientY - rect.top) / rect.height;
       if (pct >= 0.33 && pct <= 0.67) {
         groupTabs(draggedListId, l.id);
       } else {
@@ -2065,6 +2175,10 @@
 
     const label = document.createElement("div");
     label.className = "island-label";
+    label.tabIndex = 0;
+    label.setAttribute("role", "button");
+    label.setAttribute("aria-expanded", "true");
+    label.onkeydown = ev => { if (ev.target === label && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); label.click(); } };
 
     const chevron = document.createElement("span");
     chevron.className = "island-chevron";
@@ -2077,7 +2191,7 @@
     name.ondblclick = ev => { ev.stopPropagation(); renameIsland(island, name); };
     label.appendChild(name);
 
-    label.onclick = () => { island.collapsed = true; save(); renderTabs(); renderList(); };
+    label.onclick = () => setIslandCollapsed(island, true);
     label.oncontextmenu = ev => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -2100,6 +2214,10 @@
     const pill = document.createElement("div");
     pill.className = "tab island-pill" + (members.some(m => m.id === state.active) ? " active-member" : "");
     pill.dataset.islandId = island.id;
+    pill.tabIndex = 0;
+    pill.setAttribute("role", "button");
+    pill.setAttribute("aria-expanded", "false");
+    pill.onkeydown = ev => { if (ev.target === pill && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); pill.click(); } };
     if (island.color) pill.style.setProperty("--island-color", island.color);
 
     const chevron = document.createElement("span");
@@ -2113,7 +2231,7 @@
     name.ondblclick = ev => { ev.stopPropagation(); renameIsland(island, name); };
     pill.appendChild(name);
 
-    pill.onclick = () => { island.collapsed = false; save(); renderTabs(); renderList(); };
+    pill.onclick = () => setIslandCollapsed(island, false);
     pill.oncontextmenu = ev => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -2147,6 +2265,7 @@
   }
 
   function renderTabs() {
+    applyIslandCollapsePreferences();
     tabsEl.innerHTML = "";
     const rendered = new Set();
 
@@ -2175,13 +2294,13 @@
 
     const addBtn = document.createElement("button");
     addBtn.className = "tab-add";
-    addBtn.textContent = "+";
+    addBtn.textContent = "+ New list";
     addBtn.title = "New list";
     addBtn.onclick = () => {
       const l = { id: uid(), name: "New list", items: [], color: null, syncToVault: true, islandId: null };
       state.lists.push(l);
       state.active = l.id;
-      save(); renderTabs(); renderList();
+      save(); setViewMode("active", false);
       requestAnimationFrame(() => {
         const lastTab = tabsEl.querySelector(`.tab[data-list-id="${l.id}"]`);
         const nameEl = lastTab && lastTab.querySelector(".tab-name-text");
@@ -2822,6 +2941,7 @@
   }
 
   function renderList() {
+    document.getElementById("viewTitle").textContent = ({completed: "Completed", settings: "Settings", calendar: "Calendar", trash: "Trash"})[viewMode] || activeList().name;
     if (viewMode === "completed") renderCompletedList();
     else if (viewMode === "settings") renderSettingsView();
     else if (viewMode === "calendar") renderCalendarView();
@@ -3273,29 +3393,34 @@
 
     const vibrancyLabel = document.createElement("label");
     vibrancyLabel.htmlFor = "vibrancyToggle";
-    vibrancyLabel.textContent = "Translucent background";
+    vibrancyLabel.textContent = "Glass background";
 
     const switchLabel = document.createElement("label");
     switchLabel.className = "switch";
     const vibrancyToggle = document.createElement("input");
     vibrancyToggle.type = "checkbox";
     vibrancyToggle.id = "vibrancyToggle";
-    vibrancyToggle.checked = !!state.settings.vibrancy;
+    vibrancyToggle.checked = document.body.classList.contains("vibrancy");
     const switchTrack = document.createElement("span");
     switchTrack.className = "switch-track";
     switchLabel.append(vibrancyToggle, switchTrack);
 
-    vibrancyToggle.onchange = () => {
-      state.settings.vibrancy = vibrancyToggle.checked;
-      save();
-      applyVibrancy(state.settings.vibrancy);
+    vibrancyToggle.onchange = async () => {
+      const enabled = vibrancyToggle.checked;
+      vibrancyToggle.disabled = true;
+      if (await applyVibrancy(enabled)) {
+        state.settings.vibrancy = enabled;
+        save();
+      }
+      vibrancyToggle.checked = document.body.classList.contains("vibrancy");
+      vibrancyToggle.disabled = false;
     };
 
     vibrancyHeader.append(vibrancyLabel, switchLabel);
 
     const vibrancyHint = document.createElement("div");
     vibrancyHint.className = "hint";
-    vibrancyHint.textContent = "Frosted, see-through background like Control Center.";
+    vibrancyHint.textContent = "Frosted desktop blur with Icarus colors. macOS Reduce Transparency can limit this effect.";
 
     vibrancyRow.append(vibrancyHeader, vibrancyHint);
 
@@ -3378,7 +3503,8 @@
     const p = entry.payload;
 
     if (entry.kind === "list") {
-      state.lists.push(p.list);
+      p.list.restoredAt = new Date().toISOString();
+      if (!state.lists.some(l => l.id === p.list.id)) state.lists.push(p.list);
     } else if (entry.kind === "task") {
       const target = trashTargetList(entry);
       target.items.push(p.item, ...p.subtasks);
@@ -3551,9 +3677,25 @@
     return Math.round(mins / 60) + "h ago";
   }
 
+  let vibrancyRequest = Promise.resolve();
   function applyVibrancy(enabled) {
-    document.body.classList.toggle("vibrancy", !!enabled);
-    Platform.setVibrancy(enabled);
+    // Serialize startup and switch requests so a slow response cannot undo
+    // the newer preference. CSS changes only after native confirmation.
+    vibrancyRequest = vibrancyRequest.then(async () => {
+      if (!Platform.canVibrancy) return false;
+      const status = document.getElementById("appearanceStatus");
+      try {
+        if (await Platform.setVibrancy(enabled) !== true) throw new Error("Native glass unavailable");
+        document.body.classList.toggle("vibrancy", !!enabled);
+        status.hidden = true;
+        return true;
+      } catch (error) {
+        status.textContent = "Couldn’t change glass mode. Try again or restart List.";
+        status.hidden = false;
+        return false;
+      }
+    });
+    return vibrancyRequest;
   }
 
   // ---- Calendar view (day / agenda / month, picked in Settings) ----
@@ -4162,16 +4304,40 @@
   const tabsContainer = document.getElementById("tabs");
   const addForm = document.getElementById("form");
 
-  function setViewMode(mode) {
-    viewMode = viewMode === mode ? "active" : mode;
+  const appEl = document.querySelector(".app");
+  const sidebarToggle = document.getElementById("sidebarToggle");
+  const narrowWindow = matchMedia("(max-width: 479px)");
+  let sidebarCollapsed = localStorage.getItem("todo.sidebar.collapsed") === "true";
+  let drawerOpen = false;
+  function updateSidebar() {
+    appEl.classList.toggle("sidebar-collapsed", !narrowWindow.matches && sidebarCollapsed);
+    appEl.classList.toggle("sidebar-open", narrowWindow.matches && drawerOpen);
+    sidebarToggle.setAttribute("aria-expanded", String(narrowWindow.matches ? drawerOpen : !sidebarCollapsed));
+  }
+  sidebarToggle.onclick = () => {
+    if (narrowWindow.matches) drawerOpen = !drawerOpen;
+    else { sidebarCollapsed = !sidebarCollapsed; localStorage.setItem("todo.sidebar.collapsed", String(sidebarCollapsed)); }
+    updateSidebar();
+  };
+  document.getElementById("sidebarBackdrop").onclick = () => { drawerOpen = false; updateSidebar(); sidebarToggle.focus(); };
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "Escape" && drawerOpen) { drawerOpen = false; updateSidebar(); sidebarToggle.focus(); }
+  });
+  narrowWindow.addEventListener("change", () => { drawerOpen = false; updateSidebar(); });
+  updateSidebar();
+
+  function setViewMode(mode, closeDrawer = true) {
+    viewMode = mode === "active" || viewMode === mode ? "active" : mode;
     backBtn.hidden = viewMode === "active";
     calStyleBtn.hidden = viewMode !== "calendar";
+    sortBtn.hidden = viewMode !== "active";
     calendarBtn.classList.toggle("active", viewMode === "calendar");
     archiveBtn.classList.toggle("active", viewMode === "completed");
     trashBtn.classList.toggle("active", viewMode === "trash");
     settingsBtn.classList.toggle("active", viewMode === "settings");
     addForm.hidden = viewMode !== "active";
-    tabsContainer.hidden = viewMode !== "active";
+    if (closeDrawer && drawerOpen) { drawerOpen = false; updateSidebar(); sidebarToggle.focus(); }
+    renderTabs();
     renderList();
   }
 
@@ -4310,6 +4476,25 @@
   };
 
   purgeExpiredCompleted();
+  // (C) Adopt shared local task updates only while the editor is idle.
+  let sharedPollBusy = false;
+  setInterval(async () => {
+    if (IS_WEB || sharedPollBusy || localSavePending || !window.pywebview?.api?.load_backup) return;
+    if (document.activeElement?.matches('input,textarea,select,[contenteditable="true"]') || document.querySelector('.due-edit')) return;
+    sharedPollBusy = true;
+    const revision = localSaveRevision;
+    try {
+      const raw = await window.pywebview.api.load_backup();
+      if (!raw || raw === lastSharedRaw || revision !== localSaveRevision || localSavePending) return;
+      if (document.activeElement?.matches('input,textarea,select,[contenteditable="true"]')) return;
+      const doc = JSON.parse(raw);
+      if (!Array.isArray(doc.lists)) return;
+      lastSharedRaw = raw;
+      adoptRemoteState(doc);
+    } catch (_) { /* Keep the visible state when the shared store is unavailable. */ }
+    finally { sharedPollBusy = false; }
+  }, 3000);
+
   setInterval(purgeExpiredCompleted, 60 * 1000);
   setInterval(purgeExpiredTrash, 60 * 1000);
 
@@ -4321,15 +4506,18 @@
   // before this listener attaches (a real race, not just theoretical),
   // vibrancy silently never gets (re)applied for that whole session.
   // Poll as a guaranteed fallback alongside the event.
-  window.addEventListener("pywebviewready", () => applyVibrancy(state.settings.vibrancy), { once: true });
-  (function ensureVibrancyApplied() {
-    if (!state.settings.vibrancy) return;
-    if (window.pywebview && window.pywebview.api) {
-      applyVibrancy(true);
+  let vibrancyStarted = false;
+  function ensureVibrancyApplied() {
+    if (IS_WEB || vibrancyStarted) return;
+    if (window.pywebview?.api?.set_vibrancy) {
+      vibrancyStarted = true;
+      applyVibrancy(!!state.settings.vibrancy);
     } else {
       setTimeout(ensureVibrancyApplied, 200);
     }
-  })();
+  }
+  window.addEventListener("pywebviewready", ensureVibrancyApplied, { once: true });
+  ensureVibrancyApplied();
 
   // Same "poll until the bridge exists" approach as vibrancy above —
   // check the Python-side backup once the API is ready, and recover

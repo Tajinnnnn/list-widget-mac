@@ -7,8 +7,8 @@ LOCK_PATH = Path.home() / "Library" / "Application Support" / "List" / ".list.lo
 BACKUP_PATH = Path.home() / "Library" / "Application Support" / "List" / "backup.json"
 DEBUG_LOG_PATH = Path.home() / "Library" / "Application Support" / "List" / "debug.log"
 
-WINDOW_WIDTH = 360
-WINDOW_HEIGHT = 540
+WINDOW_WIDTH = 520
+WINDOW_HEIGHT = 600
 SCREEN_MARGIN = 12
 CHECK_INTERVAL_SECONDS = 20
 VAULT_SYNC_INTERVAL_SECONDS = 20

@@ -1,3 +1,5 @@
+import fcntl
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -23,6 +25,16 @@ logger = logging.getLogger(__name__)
 backup_lock = threading.RLock()
 
 
+@contextmanager
+def shared_backup_lock():
+    # (C) Coordinate with other local clients across process boundaries.
+    with backup_lock:
+        BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with BACKUP_PATH.with_suffix('.shared.lock').open('a') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            yield
+
+
 def write_backup(data):
     # A Python-owned fallback, independent of WKWebView's localStorage
     # entirely — written with an explicit flush + fsync so it's actually
@@ -40,7 +52,12 @@ def write_backup(data):
     # failure, since the durable local copy is the thing that matters here.
     ok = True
     try:
-        with backup_lock:
+        with shared_backup_lock():
+            incoming = json.loads(data)
+            if BACKUP_PATH.exists() and isinstance(incoming, dict) and isinstance(incoming.get('lists'), list):
+                existing = json.loads(BACKUP_PATH.read_text())
+                if isinstance(existing, dict) and isinstance(existing.get('lists'), list):
+                    data = json.dumps(vault_sync.merge_docs(incoming, existing))
             BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = BACKUP_PATH.with_suffix(".tmp")
             with open(tmp_path, "w") as f:

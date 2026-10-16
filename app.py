@@ -67,8 +67,8 @@ def main():
         html_path,
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
-        min_size=(300, 400),
-        background_color="#16181d",
+        min_size=(360, 400),
+        background_color="#0a090c",
         hidden=True,
         js_api=JsApi(),
     )

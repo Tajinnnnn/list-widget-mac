@@ -361,6 +361,9 @@ def merge(local: dict, remote: dict, note_mtime: str) -> dict:
     for r_list in remote.get("lists", []):
         list_id = r_list.get("id") or _gen_id()
         target_list = local_lists_by_id.get(list_id)
+        deletion = next((t for t in result.get("listTombstones", []) if t.get("id") == list_id), None)
+        if deletion and (target_list or {}).get("restoredAt", "") <= deletion.get("updatedAt", ""):
+            continue
         if target_list is None:
             target_list = {"id": list_id, "name": r_list["name"], "color": None, "items": []}
             result["lists"].append(target_list)
@@ -611,6 +614,10 @@ def merge_docs(a: dict, b: dict) -> dict:
     a = copy.deepcopy(a or {})
     b = copy.deepcopy(b or {})
 
+    # List deletions do not expire: an offline client can return at any time.
+    list_tombstones = _union_by("id", a.get("listTombstones"), b.get("listTombstones"))
+    deleted_lists = {t["id"]: t for t in list_tombstones}
+
     # --- tombstones: union, newer wins ---
     tombstones = {}
     for doc in (a, b):
@@ -691,6 +698,11 @@ def merge_docs(a: dict, b: dict) -> dict:
             base = copy.deepcopy(la)
         else:
             base = copy.deepcopy(_pick_newer(la, lb, _LIST_SCALARS))
+        restored_at = max((la or {}).get("restoredAt", ""), (lb or {}).get("restoredAt", ""))
+        if list_id in deleted_lists and restored_at <= _ts(deleted_lists[list_id]):
+            continue
+        if restored_at:
+            base["restoredAt"] = restored_at
         member_ids = [i for i, h in home.items() if h == list_id]
         base["items"] = [
             copy.deepcopy(items[i]) for i in _merge_item_order(la, lb, member_ids)
@@ -699,6 +711,7 @@ def merge_docs(a: dict, b: dict) -> dict:
 
     result = {
         "lists": merged_lists,
+        **({"listTombstones": list_tombstones} if list_tombstones else {}),
         # Sorted by id, not left in a-then-b insertion order: the contents
         # would match either way, but the *sequence* would not, which
         # breaks symmetry and would make the server rewrite the document
@@ -729,6 +742,7 @@ def merge_docs(a: dict, b: dict) -> dict:
 
     # Per-device, never merged. Fall back to the first surviving list if the
     # tab this device was looking at was deleted on the other one.
+    list_ids = [lst["id"] for lst in merged_lists]
     active = a.get("active")
     if active is None or active not in list_ids:
         active = list_ids[0] if list_ids else None
